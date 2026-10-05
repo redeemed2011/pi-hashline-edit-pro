@@ -1,11 +1,11 @@
 import { describe, expect, it, beforeAll } from "vitest";
-import { isHashRow, numberedRead, withLineNumbers, clipLine, assertLineLimit, lineLimitMoreThanMessage, truncateToBytes, getCached, splitLines, visLines, isRec, normalizeFilePath } from "../../src/utils";
+import { isHashRow, numberedRead, withLineNumbers, clipLine, assertLineLimit, lineLimitMoreThanMessage, truncateToBytes, getCached, splitLines, visLines, isRec, normalizeRequest } from "../../src/utils";
 import { parseHashRef } from "../../src/hashline/parse";
 import { initHasher, getH, xxh32, contentChecksum } from "../../src/hashline/hasher";
 import { isValidHashList, parseHashList, parseStoredHashes, isValidSnapshot, isCorruptionError, isBusyError } from "../../src/hash-store/validation";
 import { canon, hashSource } from "../../src/hashline/hash";
 import { toCwd } from "../../src/paths";
-import { withTempDir, withTempFile, setupIntegrationTest } from "../support/fixtures";
+import { withTempDir, withTempFile, setupIntegrationTest, toolError } from "../support/fixtures";
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 
@@ -74,13 +74,12 @@ describe("coverage boost utils", () => {
     expect(visLines("")).toEqual([]);
     expect(visLines("a\nb")).toEqual(["a", "b"]);
   });
-  it("isRec and normalizeFilePath", () => {
+  it("isRec and normalizeRequest leave aliases untouched", () => {
     expect(isRec({})).toBe(true);
     expect(isRec(null)).toBe(false);
-    const r: Record<string, unknown> = { file_path: "a.txt" };
-    normalizeFilePath(r);
-    expect(r.path).toBe("a.txt");
-    expect(r.file_path).toBeUndefined();
+    const r = normalizeRequest({ file_path: "a.txt" }) as Record<string, unknown>;
+    expect(r.path).toBeUndefined();
+    expect(r.file_path).toBe("a.txt");
   });
   it("canon and hashSource and toCwd", () => {
     expect(canon("  hello   ")).toBe("  hello");
@@ -192,10 +191,10 @@ describe("coverage boost grep", () => {
     await withTempFile("a.txt", "hello\n", async ({ cwd }) => {
       const { ctx, getTool } = setupIntegrationTest(cwd);
       const grep = getTool("anchor_grep");
-      await expect(grep.execute("g1", { pattern: "a".repeat(5000), path: "a.txt" }, undefined, undefined, ctx)).rejects.toThrow("[E_UNSAFE_REGEX]");
-      await expect(grep.execute("g1", { pattern: "(a+)+", path: "a.txt" }, undefined, undefined, ctx)).rejects.toThrow("[E_UNSAFE_REGEX]");
-      await expect(grep.execute("g1", { pattern: "a{1001}", path: "a.txt" }, undefined, undefined, ctx)).rejects.toThrow("[E_UNSAFE_REGEX]");
-      await expect(grep.execute("g1", { pattern: "z{2000}", path: "a.txt" }, undefined, undefined, ctx)).rejects.toThrow("[E_UNSAFE_REGEX]");
+      expect(await toolError(() => grep.execute("g1", { pattern: "a".repeat(5000), path: "a.txt" }, undefined, undefined, ctx))).toContain("[E_UNSAFE_REGEX]");
+      expect(await toolError(() => grep.execute("g1", { pattern: "(a+)+", path: "a.txt" }, undefined, undefined, ctx))).toContain("[E_UNSAFE_REGEX]");
+      expect(await toolError(() => grep.execute("g1", { pattern: "a{1001}", path: "a.txt" }, undefined, undefined, ctx))).toContain("[E_UNSAFE_REGEX]");
+      expect(await toolError(() => grep.execute("g1", { pattern: "z{2000}", path: "a.txt" }, undefined, undefined, ctx))).toContain("[E_UNSAFE_REGEX]");
     });
   });
   it("handles glob and literal and ignoreCase", async () => {
@@ -244,8 +243,8 @@ describe("coverage boost hash-store and read", () => {
   it("covers insert validation", async () => {
     const { assertInsertReq } = await import("../../src/insert");
     expect(() => assertInsertReq(null)).toThrow("[E_BAD_SHAPE]");
-    expect(() => assertInsertReq({ anchor: "", direction: "after", lines: [] })).toThrow();
-    expect(() => assertInsertReq({ anchor: "abc", direction: "wrong" as never, lines: [] })).toThrow();
-    expect(() => assertInsertReq({ anchor: "abc", direction: "after", lines: "x" })).not.toThrow();
+    expect(() => assertInsertReq({ anchor: "", direction: "after", text: [] })).toThrow();
+    expect(() => assertInsertReq({ anchor: "abc", direction: "wrong" as never, text: [] })).toThrow();
+    expect(() => assertInsertReq({ anchor: "abc", direction: "after", text: "x" })).not.toThrow();
   });
 });

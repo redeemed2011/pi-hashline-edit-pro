@@ -2,7 +2,7 @@ import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { resolveInCwd } from "./fs-write";
 import { abortIf, makePrepareArguments } from "./utils";
 import { ownerOf, ownersDifferingOnlyByCase, type OwnedAnchor } from "./anchor-registry";
-import { parseHashRef, stripAnchorRow } from "./hashline";
+import { assertRangeServed, lineChecksum, parseHashRef, stripAnchorRow } from "./hashline";
 import { readConfig } from "./config";
 import { makeRenderCall, renderEditResult, type RPreview, type FgT } from "./replace-render";
 import type { ReplaceDetails } from "./replace";
@@ -13,8 +13,9 @@ export interface EditToolFlags {
   strictInput: boolean;
   autoRead: boolean;
   autoReadAllActive: boolean;
-  replaceWithinEnabled: boolean;
+  replaceMatchEnabled: boolean;
   copyMoveEnabled: boolean;
+  codemode: boolean;
 }
 
 export const DEFAULT_EDIT_FLAGS: EditToolFlags = {
@@ -22,102 +23,125 @@ export const DEFAULT_EDIT_FLAGS: EditToolFlags = {
   strictInput: false,
   autoRead: true,
   autoReadAllActive: false,
-  replaceWithinEnabled: true,
-  copyMoveEnabled: true
+  replaceMatchEnabled: true,
+  copyMoveEnabled: true,
+  codemode: false,
 };
 
-export async function currentEditFlags(): Promise<EditToolFlags> {
+export async function currentEditFlags(codemode = false): Promise<EditToolFlags> {
   const config = await readConfig();
   return {
     requirePath: config.requirePath === true,
     strictInput: config.strictInput === true,
     autoRead: config.autoRead !== false,
     autoReadAllActive: (config.autoReadAll ?? "off") !== "off",
-    replaceWithinEnabled: config.replaceWithinEnabled !== false,
-    copyMoveEnabled: config.copyMoveEnabled !== false
+    replaceMatchEnabled: config.replaceMatchEnabled !== false,
+    copyMoveEnabled: config.copyMoveEnabled !== false,
+    codemode
   };
 }
 
 function preferenceGuideline(flags: EditToolFlags): string {
-  const tools = gatedEditOps(["read", "replace", "replace_within", "insert", "copy", "move", "undo_last_change"], flags);
+  const tools = gatedEditOps(["read", "replace", "replace_match", "insert", "copy", "move", "undo_last_change"], flags);
   return `Prefer the hashline tools for anything that touches files: ${joinOps(tools, { backtick: true })}.`;
+}
+
+const SHARED_EDIT_OPS = ["replace", "replace_match", "insert", "copy", "move"];
+const SHARED_PAYLOAD_OPS = ["replace", "replace_match", "insert"];
+const SHARED_DIFF_OPS = ["replace", "replace_match", "insert", "copy", "move", "undo_last_change"];
+const RESULT_CONTRACT_GUIDELINE =
+  'When called from a codemode script, failures resolve to `{ ok: false, kind: "error", error: { code, message } }`; branch on `ok` instead of `try`/`catch`.';
+const SCRIPT_BATCH_GUIDELINE =
+  "Script calls apply immediately in order, and only the most recent edit per file is undoable.";
+const SCRIPT_TRANSFER_GUIDELINE =
+  "`copy`/`move`: a call from a codemode script commits on its own and never joins a batch; a script cross-file `move` shows both the source and destination diffs.";
+const SCRIPT_UNDO_GUIDELINE =
+  "`undo_last_change`: each edit from one codemode script takes the undo slot, so only the most recent is undoable.";
+
+function operationNames(ops: string[], flags: EditToolFlags): string {
+  return joinOps(gatedEditOps(ops, flags), { backtick: true, separator: "/" });
+}
+
+function batchGuideline(flags: EditToolFlags): string {
+  const tools = operationNames(SHARED_EDIT_OPS, flags);
+  const outcome = flags.autoRead ? "diff" : "result";
+  const script = flags.codemode ? ` ${SCRIPT_BATCH_GUIDELINE}` : "";
+  return `${tools}: same-file calls in one message are grouped into one batch; earlier calls reply \`In batch N (queued)\` and the last call shows the combined ${outcome}, with one undo for the whole batch.${script}`;
+}
+
+function diffGuideline(flags: EditToolFlags): string {
+  const tools = operationNames(SHARED_DIFF_OPS, flags);
+  return `${tools}: in the post-edit diff, \`-anchor│\` rows are dead anchors; \`+anchor│\` and \` anchor│\` rows are live anchors for the next edit.`;
+}
+
+function pathGuideline(flags: EditToolFlags): string {
+  const tools = operationNames(SHARED_EDIT_OPS, flags);
+  return flags.requirePath
+    ? `${tools}: pass \`path\` matching the file the anchors were served for; it is required and must match anchor ownership.`
+    : `${tools}: path resolution is anchor-only; do not pass \`path\`.`;
+}
+
+function payloadGuideline(flags: EditToolFlags): string {
+  const tools = operationNames(SHARED_PAYLOAD_OPS, flags);
+  return `${tools}: JSON decoding happens once, before the tool; the tool writes the string it receives and never decodes — \`\\uXXXX\` is the character, \`\\\\uXXXX\` the literal text.`;
+}
+
+function strictInputGuideline(flags: EditToolFlags): string {
+  const tools = operationNames(SHARED_EDIT_OPS, flags);
+  return `${tools}: strict-input mode is on; auto-fixable slips are rejected instead of fixed with warnings.`;
+}
+
+function finalizePrompts(
+  description: string,
+  snippet: string,
+  guidelines: string[],
+  flags: EditToolFlags,
+  options?: { stringPayload?: boolean },
+): { description: string; snippet: string; guidelines: string[] } {
+  const shared = [batchGuideline(flags), pathGuideline(flags)];
+  if (flags.codemode) shared.push(RESULT_CONTRACT_GUIDELINE);
+  if (flags.autoRead) shared.push(diffGuideline(flags));
+  if (options?.stringPayload !== false) shared.push(payloadGuideline(flags));
+  if (flags.strictInput) shared.push(strictInputGuideline(flags));
+  return { description, snippet, guidelines: [...guidelines, ...shared] };
 }
 
 export function withReplacePrompts(base: { description: string; snippet: string; guidelines: string[] }, flags: EditToolFlags): { description: string; snippet: string; guidelines: string[] } {
   let description = base.description;
-  const snippetParts = [base.snippet];
-  let guidelines = [preferenceGuideline(flags), ...base.guidelines];
-  if (!flags.autoRead) {
-    description = description.replace(/\n\nExample:[\s\S]*$/, "");
-    guidelines = guidelines.filter((guideline) => !guideline.includes("post-edit diff"));
-    description = description.replace("and the last call shows the combined diff,", "and the last call shows the combined result,");
+  const guidelines = [preferenceGuideline(flags), ...base.guidelines];
+  if (!flags.replaceMatchEnabled) {
+    description = description.replace(/\n?To change only part of a line without retyping the rest, use `replace_match` instead; it preserves every character the request does not name\./, "");
   }
-  if (!flags.replaceWithinEnabled) {
-    description = description.replace(/\n?To change only part of a line without retyping the rest, use `replace_within` instead; it preserves every character the request does not name\./, "");
-  }
-  const descriptionParts = [description];
-  if (flags.requirePath) {
-    descriptionParts.push("Also give `path` matching the file the anchors were served for; it is required and must match anchor ownership.");
-    snippetParts.push("; include `path` (required)");
-  } else {
-    descriptionParts.push("Path resolution is anchor-only; do not pass `path`.");
-  }
-  if (flags.strictInput) {
-    descriptionParts.push("Strict-input mode is on: auto-fixable slips are rejected instead of fixed with warnings.");
-  }
-  return { description: descriptionParts.join(" "), snippet: snippetParts.join(""), guidelines };
+  return finalizePrompts(description, base.snippet, guidelines, flags);
 }
 
 export function withReadPrompts(base: { description: string; snippet: string; guidelines: string[] }, flags: EditToolFlags): { description: string; snippet: string; guidelines: string[] } {
   const preference = preferenceGuideline(flags);
+  const script = flags.codemode ? [RESULT_CONTRACT_GUIDELINE] : [];
   if (flags.autoReadAllActive) {
     const rewritten = base.guidelines
       .filter((guideline) => !guideline.includes("call again after an edit"))
-    return { description: base.description, snippet: base.snippet, guidelines: [preference, ...rewritten] };
+    return { description: base.description, snippet: base.snippet, guidelines: [preference, ...rewritten, ...script] };
   }
-  const withoutAutoReadAll = base.guidelines.filter((guideline) => !guideline.includes("E_AUTO_READ_ALL"))
-  if (flags.autoRead) return { description: base.description, snippet: base.snippet, guidelines: [preference, ...withoutAutoReadAll] };
-  const guidelines = [preference, ...withoutAutoReadAll];
+  if (flags.autoRead) return { description: base.description, snippet: base.snippet, guidelines: [preference, ...base.guidelines, ...script] };
+  const guidelines = [preference, ...base.guidelines, ...script];
   const mapped = guidelines.map((guideline) => guideline.startsWith("`read`: call again after an edit") ? "`read`: call again after an edit when you need anchors you lack." : guideline);
   return { description: base.description, snippet: base.snippet, guidelines: mapped };
 }
 
 export function withInsertPrompts(base: { description: string; snippet: string; guidelines: string[] }, flags: EditToolFlags): { description: string; snippet: string; guidelines: string[] } {
-  const baseDescription = flags.autoRead ? base.description : base.description.replace("and the last call shows the combined diff,", "and the last call shows the combined result,");
-  const descriptionParts = [baseDescription];
-  const snippetParts = [base.snippet];
   const guidelines = [...base.guidelines];
-  if (flags.requirePath) {
-    descriptionParts.push("Also give `path` matching the file the anchor was served for; it is required and must match anchor ownership.");
-    snippetParts.push("; include `path` (required)");
-  } else {
-    descriptionParts.push("Path resolution is anchor-only; do not pass `path`.");
-  }
-  if (flags.strictInput) {
-    descriptionParts.push("Strict-input mode is on: auto-fixable slips are rejected instead of fixed with warnings.");
-  }
-  return { description: descriptionParts.join(" "), snippet: snippetParts.join(""), guidelines };
+  return finalizePrompts(base.description, base.snippet, guidelines, flags);
 }
 
-export function withReplaceWithinPrompts(base: { description: string; snippet: string; guidelines: string[] }, flags: EditToolFlags): { description: string; snippet: string; guidelines: string[] } {
-  const descriptionParts = [base.description];
-  const snippetParts = [base.snippet];
+export function withReplaceMatchPrompts(base: { description: string; snippet: string; guidelines: string[] }, flags: EditToolFlags): { description: string; snippet: string; guidelines: string[] } {
   const guidelines = [...base.guidelines];
-  if (flags.requirePath) {
-    descriptionParts.push("Also give `path` matching the file the anchors were served for; it is required and must match anchor ownership.");
-    snippetParts.push("; include `path` (required)");
-  } else {
-    descriptionParts.push("Path resolution is anchor-only; do not pass `path`.");
-  }
-  if (flags.strictInput) {
-    descriptionParts.push("Strict-input mode is on: auto-fixable slips are rejected instead of fixed with warnings.");
-  }
-  return { description: descriptionParts.join(" "), snippet: snippetParts.join(""), guidelines };
+  return finalizePrompts(base.description, base.snippet, guidelines, flags);
 }
 
 function gatedEditOps(ops: string[], flags: EditToolFlags): string[] {
   return ops.filter((op) => {
-    if (op === "replace_within") return flags.replaceWithinEnabled;
+    if (op === "replace_match") return flags.replaceMatchEnabled;
     if (op === "copy" || op === "move") return flags.copyMoveEnabled;
     return true;
   });
@@ -132,23 +156,26 @@ function joinOps(ops: string[], options?: { backtick?: boolean; separator?: "/" 
   return formatted.length === 2 ? `${head} or ${last}` : `${head}, or ${last}`;
 }
 
-export function withGrepPrompts(base: { description: string; snippet: string }, flags: EditToolFlags): { description: string; snippet: string } {
-  if (flags.copyMoveEnabled) return base;
-  return { ...base, description: base.description.replaceAll("replace, insert, copy, or move", joinOps(gatedEditOps(["replace", "insert", "copy", "move"], flags))) };
+export function withGrepPrompts(base: { description: string; snippet: string; guidelines: string[] }, flags: EditToolFlags): { description: string; snippet: string; guidelines: string[] } {
+  if (!flags.codemode && flags.copyMoveEnabled) return base;
+  const guidelines = flags.codemode ? [...base.guidelines, RESULT_CONTRACT_GUIDELINE] : base.guidelines;
+  if (flags.copyMoveEnabled) return { ...base, guidelines };
+  return { ...base, guidelines, description: base.description.replaceAll("replace, insert, copy, or move", joinOps(gatedEditOps(["replace", "insert", "copy", "move"], flags))) };
 }
 
 export function withUndoPrompts(base: { description: string; snippet: string; guidelines: string[] }, flags: EditToolFlags): { description: string; snippet: string; guidelines: string[] } {
-  const ops = gatedEditOps(["replace", "replace_within", "insert", "copy", "move"], flags);
+  const ops = gatedEditOps(["replace", "replace_match", "insert", "copy", "move"], flags);
   let description = base.description;
   let snippet = base.snippet;
-  let guidelines = [...base.guidelines];
+  const script = flags.codemode ? [RESULT_CONTRACT_GUIDELINE, SCRIPT_UNDO_GUIDELINE] : [];
+  let guidelines = [...base.guidelines, ...script];
   if (!flags.autoRead) {
-    guidelines = guidelines.map((guideline) => guideline.includes("bad diff") ? "`undo_last_change`: only the last `replace`/`replace_within`/`insert`/`copy`/`move` per file is undoable; a `write` clears it, so undo right after a bad edit — review what you're restoring." : guideline);
+    guidelines = guidelines.map((guideline) => guideline.includes("bad diff") ? "`undo_last_change`: only the last `replace`/`replace_match`/`insert`/`copy`/`move` per file is undoable; a `write` clears it, so undo right after a bad edit — review what you're restoring." : guideline);
   }
   if (ops.length !== 5) {
-    description = description.replaceAll("replace, replace_within, insert, copy, or move", joinOps(ops));
-    snippet = snippet.replaceAll("`replace`, `replace_within`, `insert`, `copy`, or `move`", joinOps(ops, { backtick: true }));
-    guidelines = guidelines.map((guideline) => guideline.replaceAll("`replace`/`replace_within`/`insert`/`copy`/`move`", joinOps(ops, { backtick: true, separator: "/" })));
+    description = description.replaceAll("replace, replace_match, insert, copy, or move", joinOps(ops));
+    snippet = snippet.replaceAll("`replace`, `replace_match`, `insert`, `copy`, or `move`", joinOps(ops, { backtick: true }));
+    guidelines = guidelines.map((guideline) => guideline.replaceAll("`replace`/`replace_match`/`insert`/`copy`/`move`", joinOps(ops, { backtick: true, separator: "/" })));
   }
   if (!flags.copyMoveEnabled) {
     guidelines = guidelines.filter((guideline) => !guideline.includes("cross-file `move`"));
@@ -157,19 +184,8 @@ export function withUndoPrompts(base: { description: string; snippet: string; gu
 }
 
 export function withTransferPrompts(base: { description: string; snippet: string; guidelines: string[] }, flags: EditToolFlags): { description: string; snippet: string; guidelines: string[] } {
-  const descriptionParts = [base.description];
-  const snippetParts = [base.snippet];
-  const guidelines = [...base.guidelines];
-  if (flags.requirePath) {
-    descriptionParts.push("Also give `path` matching the source or destination file the anchors were served for; it is required and must match anchor ownership.");
-    snippetParts.push("; include `path` (required)");
-  } else {
-    descriptionParts.push("Path resolution is anchor-only; do not pass `path`.");
-  }
-  if (flags.strictInput) {
-    descriptionParts.push("Strict-input mode is on: auto-fixable slips are rejected instead of fixed with warnings.");
-  }
-  return { description: descriptionParts.join(" "), snippet: snippetParts.join(""), guidelines };
+  const guidelines = flags.codemode ? [...base.guidelines, SCRIPT_TRANSFER_GUIDELINE] : [...base.guidelines];
+  return finalizePrompts(base.description, base.snippet, guidelines, flags, { stringPayload: false });
 }
 
 function staleAnchorMessage(ref: string, hash: string, owners: Array<OwnedAnchor | undefined>): string {
@@ -294,3 +310,41 @@ export async function queuedEdit<T>(
   });
 }
 
+export function trustRangeServed(
+  fileLines: string[],
+  fileHashes: string[],
+  served: ReadonlyMap<string, string> | undefined,
+  startLine: number,
+  endLine: number,
+): ReadonlyMap<string, string> | undefined {
+  if (served === undefined) return undefined;
+  const merged = new Map(served);
+  for (let line = startLine; line <= endLine; line += 1) {
+    merged.set(fileHashes[line - 1]!, lineChecksum(fileLines[line - 1]!));
+  }
+  return merged;
+}
+
+export function assertBoundaryLinesServed(
+  fileLines: string[],
+  fileHashes: string[],
+  served: ReadonlyMap<string, string> | undefined,
+  startLine: number,
+  endLine: number,
+  displayPath: string,
+): void {
+  if (served === undefined) return;
+  assertRangeServed(
+    {
+      content_lines: [],
+      hash_bounds: [
+        { line: startLine, hash: fileHashes[startLine - 1]! },
+        { line: endLine, hash: fileHashes[endLine - 1]! },
+      ],
+    },
+    fileLines,
+    fileHashes,
+    served,
+    displayPath,
+  );
+}

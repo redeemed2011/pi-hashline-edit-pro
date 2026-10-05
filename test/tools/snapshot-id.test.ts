@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFile, writeFile } from "fs/promises";
-import { withTempFile, setupIntegrationTest } from "../support/fixtures";
+import { withTempFile, setupIntegrationTest, toolError } from "../support/fixtures";
 
 describe("snapshotId surface (details-only after W2)", () => {
   it("edit succeeds when the file changed on disk between read and edit, as long as the changed line is outside the replaced range", async () => {
@@ -19,7 +19,7 @@ describe("snapshotId surface (details-only after W2)", () => {
       const result = await editTool.execute(
         "e1",
         {
-          remove_from: betaRef, remove_to: betaRef, replacement_lines: ["BETA"],
+          remove_from: betaRef, remove_to: betaRef, text: ["BETA"],
         },
         undefined,
         undefined,
@@ -47,17 +47,15 @@ describe("snapshotId surface (details-only after W2)", () => {
 
       await writeFile(path, "alpha\nBETA\ngamma\n", "utf-8");
 
-      await expect(
-        editTool.execute(
-          "e1",
-          {
-            remove_from: alphaRef, remove_to: gammaRef, replacement_lines: ["alpha", "x", "gamma"],
-          },
-          undefined,
-          undefined,
-          ctx,
-        ),
-      ).rejects.toThrow(/E_RANGE_STALE/);
+      expect(await toolError(() => editTool.execute(
+        "e1",
+        {
+          remove_from: alphaRef, remove_to: gammaRef, text: ["alpha", "x", "gamma"],
+        },
+        undefined,
+        undefined,
+        ctx,
+      ))).toMatch(/E_RANGE_STALE/);
       expect(await readFile(path, "utf-8")).toBe("alpha\nBETA\ngamma\n");
     });
   });
@@ -76,7 +74,7 @@ describe("snapshotId surface (details-only after W2)", () => {
       const result = await editTool.execute(
         "e1",
         {
-          remove_from: betaRef, remove_to: betaRef, replacement_lines: ["BETA"],
+          remove_from: betaRef, remove_to: betaRef, text: ["BETA"],
         },
         undefined,
         undefined,
@@ -100,24 +98,22 @@ describe("snapshotId surface (details-only after W2)", () => {
       await editTool.execute(
         "e1",
         {
-          remove_from: betaRef, remove_to: betaRef, replacement_lines: ["BETA"],
+          remove_from: betaRef, remove_to: betaRef, text: ["BETA"],
         },
         undefined,
         undefined,
         ctx,
       );
 
-      await expect(
-        editTool.execute(
-          "e2",
-          {
-            remove_from: betaRef, remove_to: betaRef, replacement_lines: ["BETA-AGAIN"],
-          },
-          undefined,
-          undefined,
-          ctx,
-        ),
-      ).rejects.toThrow(/E_STALE_ANCHOR.*not owned in this session/);
+      expect(await toolError(() => editTool.execute(
+        "e2",
+        {
+          remove_from: betaRef, remove_to: betaRef, text: ["BETA-AGAIN"],
+        },
+        undefined,
+        undefined,
+        ctx,
+      ))).toMatch(/E_STALE_ANCHOR.*not owned in this session/);
     });
   });
 });

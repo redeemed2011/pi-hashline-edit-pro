@@ -13,7 +13,7 @@ describe("resAnchor (via applyEdit)", () => {
     const content = "a\nb\nc\nd\ne";
     const hashes = await lineHashes(content, home.testPath);
     const result = applyEdit(content, resEdit(
-      { remove_from: hashes[1]!, remove_to: hashes[2]!, replacement_lines: ["X", "Y"] },
+      { remove_from: hashes[1]!, remove_to: hashes[2]!, text: ["X", "Y"] },
     ), undefined, hashes);
     expect(result.content).toBe("a\nX\nY\nd\ne");
   });
@@ -23,7 +23,7 @@ describe("resAnchor (via applyEdit)", () => {
     const hashes = await lineHashes(content, home.testPath);
     expect(() =>
       applyEdit(content, resEdit(
-        { remove_from: "PyBY", remove_to: "PyBY", replacement_lines: ["X"] },
+        { remove_from: "PyBY", remove_to: "PyBY", text: ["X"] },
       ), undefined, hashes)
     ).toThrow(/E_STALE_ANCHOR/);
   });
@@ -35,7 +35,7 @@ describe("resToSpan (via applyEdit)", () => {
     const content = "a\nb\nc\nd\ne";
     const hashes = await lineHashes(content, home.testPath);
     const result = applyEdit(content, resEdit(
-      { remove_from: hashes[1]!, remove_to: hashes[2]!, replacement_lines: ["X", "Y"] },
+      { remove_from: hashes[1]!, remove_to: hashes[2]!, text: ["X", "Y"] },
     ), undefined, hashes);
     expect(result.content).toBe("a\nX\nY\nd\ne");
   });
@@ -44,7 +44,7 @@ describe("resToSpan (via applyEdit)", () => {
     const content = "a\nb\nc\nd\ne";
     const hashes = await lineHashes(content, home.testPath);
     const result = applyEdit(content, resEdit(
-      { remove_from: hashes[1]!, remove_to: hashes[2]!, replacement_lines: [] },
+      { remove_from: hashes[1]!, remove_to: hashes[2]!, text: [] },
     ), undefined, hashes);
     expect(result.content).toBe("a\nd\ne");
   });
@@ -52,18 +52,17 @@ describe("resToSpan (via applyEdit)", () => {
   it("branch: empty replacement covering entire file", async () => {
     const content = "a\nb\nc";
     const hashes = await lineHashes(content, home.testPath);
-    expect(() =>
-      applyEdit(content, resEdit(
-        { remove_from: hashes[0]!, remove_to: hashes[2]!, replacement_lines: [] },
-      ), undefined, hashes)
-    ).toThrow(/E_WOULD_EMPTY/);
+    const result = applyEdit(content, resEdit(
+      { remove_from: hashes[0]!, remove_to: hashes[2]!, text: [] },
+    ), undefined, hashes);
+    expect(result.content).toBe("");
   });
 
   it("branch: empty replacement ending at last line (not full file)", async () => {
     const content = "a\nb\nc\nd\ne";
     const hashes = await lineHashes(content, home.testPath);
     const result = applyEdit(content, resEdit(
-      { remove_from: hashes[2]!, remove_to: hashes[4]!, replacement_lines: [] },
+      { remove_from: hashes[2]!, remove_to: hashes[4]!, text: [] },
     ), undefined, hashes);
     expect(result.content).toBe("a\nb");
   });
@@ -72,7 +71,7 @@ describe("resToSpan (via applyEdit)", () => {
     const content = "a\nb\nc";
     const hashes = await lineHashes(content, home.testPath);
     const result = applyEdit(content, resEdit(
-      { remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: ["b"] },
+      { remove_from: hashes[1]!, remove_to: hashes[1]!, text: ["b"] },
     ), undefined, hashes);
     expect(result.noopEdit).toBeDefined();
   });
@@ -81,7 +80,7 @@ describe("resToSpan (via applyEdit)", () => {
     const content = "a\nb\nc";
     const hashes = await lineHashes(content, home.testPath);
     const result = applyEdit(content, resEdit(
-      { remove_from: hashes[0]!, remove_to: hashes[0]!, replacement_lines: ["X"] },
+      { remove_from: hashes[0]!, remove_to: hashes[0]!, text: ["X"] },
     ), undefined, hashes);
     expect(result.content).toBe("X\nb\nc");
   });
@@ -90,7 +89,7 @@ describe("resToSpan (via applyEdit)", () => {
     const content = "a\nb\nc";
     const hashes = await lineHashes(content, home.testPath);
     const result = applyEdit(content, resEdit(
-      { remove_from: hashes[2]!, remove_to: hashes[2]!, replacement_lines: ["X"] },
+      { remove_from: hashes[2]!, remove_to: hashes[2]!, text: ["X"] },
     ), undefined, hashes);
     expect(result.content).toBe("a\nb\nX");
   });
@@ -99,7 +98,7 @@ describe("resToSpan (via applyEdit)", () => {
     const content = "a\nb\nc";
     const hashes = await lineHashes(content, home.testPath);
     const result = applyEdit(content, resEdit(
-      { remove_from: hashes[0]!, remove_to: hashes[0]!, replacement_lines: [] },
+      { remove_from: hashes[0]!, remove_to: hashes[0]!, text: [] },
     ), undefined, hashes);
     expect(result.content).toBe("b\nc");
   });
@@ -108,7 +107,7 @@ describe("resToSpan (via applyEdit)", () => {
     const content = "a\nb\nc";
     const hashes = await lineHashes(content, home.testPath);
     const result = applyEdit(content, resEdit(
-      { remove_from: hashes[2]!, remove_to: hashes[2]!, replacement_lines: [] },
+      { remove_from: hashes[2]!, remove_to: hashes[2]!, text: [] },
     ), undefined, hashes);
     expect(result.content).toBe("a\nb");
   });
@@ -119,7 +118,7 @@ describe("assemble (via applyEdit)", () => {
     const content = "a\nb\nc\nd\ne";
     const hashes = await lineHashes(content, home.testPath);
     const result = applyEdit(content, resEdit(
-      { remove_from: hashes[0]!, remove_to: hashes[0]!, replacement_lines: ["A"] },
+      { remove_from: hashes[0]!, remove_to: hashes[0]!, text: ["A"] },
     ), undefined, hashes);
     expect(result.content).toBe("A\nb\nc\nd\ne");
   });

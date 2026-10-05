@@ -11,14 +11,15 @@ import { globToRegex } from "./glob";
 import { MAX_HASH_LINES, fmtRow, HASH_LEN, HASH_SEP, HASH_CLASS } from "./hashline";
 import { ANCHOR_POOL_EXHAUSTED_PREFIX, MAX_GREP_LINE_BYTES } from "./constants";
 import { toCwd, toDisplayPath } from "./paths";
-import { loadP } from "./prompts";
+import { loadP, loadGuide } from "./prompts";
 import { normReq } from "./payload-contract";
 import { DEFAULT_EDIT_FLAGS, withGrepPrompts, type EditToolFlags } from "./edit-common";
-import { abortIf, clipLine, errCode, gutterWidth, isRec, makePrepareArguments, rejectUnknownFields, truncateToBytes, visLines } from "./utils";
+import { abortIf, clipLine, errCode, isRec, makePrepareArguments, rejectUnknownFields, truncateToBytes, visLines, withLineNumbers } from "./utils";
 import { withAnchorSession, formatAnchorReclaimNotice, takeReclaimedPaths } from "./anchor-registry";
 import { serveRows } from "./served";
 import { Text } from "@earendil-works/pi-tui";
 import { expandHint, getResultText, reuseText, type CallT, type FgT } from "./replace-render";
+import { anchoredLine, grepResultSchema, withStructuredErrors, type GrepStructured } from "./structured";
 export const RG_TIMEOUT_MS = 10_000;
 
 const GREP_KS = new Set(["pattern", "path", "glob", "context", "ignoreCase", "literal", "limit"]);
@@ -176,6 +177,9 @@ interface FileHit {
   matchCount: number;
   totalMatchCount: number;
   fragmented: boolean[];
+  texts: string[];
+  matchLines: number[];
+  hadUtf8DecodeErrors: boolean;
 }
 
 const GREP_ROW_OVERHEAD_BYTES = HASH_LEN + Buffer.byteLength(HASH_SEP, "utf-8");
@@ -214,7 +218,7 @@ function grepHeadFragment(line: string): string {
 }
 
 function makeHitFromIndices(
-  norm: { normalized: string; fileHashes: string[]; absolutePath: string },
+  norm: { normalized: string; fileHashes: string[]; absolutePath: string; hadUtf8DecodeErrors: boolean },
   displayPath: string,
   matchIndices: number[],
   context: number,
@@ -234,6 +238,7 @@ function makeHitFromIndices(
   const hashes: string[] = [];
   const lineNumbers: number[] = [];
   const fragmented: boolean[] = [];
+  const texts: string[] = [];
   for (const idx of sorted) {
     const hash = norm.fileHashes[idx]!;
     const line = lines[idx]!;
@@ -244,11 +249,13 @@ function makeHitFromIndices(
       hashes.push(hash);
       lineNumbers.push(idx + 1);
       fragmented.push(true);
+      texts.push(content);
     } else {
       rows.push(row);
       hashes.push(hash);
       lineNumbers.push(idx + 1);
       fragmented.push(false);
+      texts.push(line);
     }
   }
   return {
@@ -262,6 +269,9 @@ function makeHitFromIndices(
     matchCount: kept.length,
     totalMatchCount,
     fragmented,
+    texts,
+    matchLines: kept.map((index) => index + 1),
+    hadUtf8DecodeErrors: norm.hadUtf8DecodeErrors,
   };
 }
 
@@ -406,14 +416,7 @@ async function collectRgMatches(
 
 
 function displayRowsForHit(hit: FileHit): string[] {
-  let max = 0;
-  for (const n of hit.lineNumbers) if (n > max) max = n;
-  const width = gutterWidth(max, 1);
-  return hit.rows.map((row, i) => {
-    const n = hit.lineNumbers[i]!;
-    const padded = String(n).padStart(width, " ");
-    return `${padded} │ ${row}`;
-  });
+  return withLineNumbers(hit.rows.join("\n"), hit.lineNumbers).split("\n").slice(0, hit.rows.length);
 }
 
 const grepToolSchema = Type.Object(
@@ -531,14 +534,20 @@ export function renderGrepResult(result: { content?: Array<{ type: string; text?
   return reuseText(context, shown.join("\n"));
 }
 export function regGrep(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FLAGS): void {
-  const prompted = withGrepPrompts({ description: loadP("../prompts/grep.md"), snippet: loadP("../prompts/grep-snippet.md") }, flags);
+  const prompted = withGrepPrompts({
+    description: loadP("../prompts/grep.md"),
+    snippet: loadP("../prompts/grep-snippet.md"),
+    guidelines: loadGuide("../prompts/grep-guidelines.md"),
+  }, flags);
   pi.registerTool({
     name: "anchor_grep",
     label: "Anchor Grep",
     description: prompted.description,
     promptSnippet: prompted.snippet,
+    promptGuidelines: prompted.guidelines,
     prepareArguments: makePrepareArguments(),
     parameters: grepToolSchema,
+    outputSchema: grepResultSchema,
     executionMode: "sequential",
     renderCall(args: any, theme: CallT, context: any) {
       const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
@@ -550,7 +559,7 @@ export function regGrep(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
     },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      return withAnchorSession(ctx, async () => {
+      return withStructuredErrors(signal, {}, () => withAnchorSession(ctx, async () => {
         const canonical = normReq(params);
         assertGrepReq(canonical);
         const req = canonical;
@@ -642,6 +651,7 @@ export function regGrep(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
           const keptHashes: string[] = [];
           const keptLineNumbers: number[] = [];
           const keptFragmented: boolean[] = [];
+          const keptTexts: string[] = [];
           for (let i = 0; i < display.length; i++) {
             const row = display[i]!;
             const rowBytes = Buffer.byteLength(row, "utf-8") + 1;
@@ -658,6 +668,7 @@ export function regGrep(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
             keptHashes.push(hit.hashes[i]!);
             keptLineNumbers.push(hit.lineNumbers[i]!);
             keptFragmented.push(hit.fragmented[i]!);
+            keptTexts.push(hit.texts[i]!);
             if (hit.fragmented[i]) linesReplaced += 1;
             rowCount += 1;
             byteCount += rowBytes;
@@ -666,7 +677,7 @@ export function regGrep(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
           }
           if (hit.totalMatchCount > hit.matchCount) limitTruncated = true;
           matches += hit.matchCount;
-          const displayHit: FileHit = { ...hit, rows: keptRows, hashes: keptHashes, lineNumbers: keptLineNumbers, fragmented: keptFragmented };
+          const displayHit: FileHit = { ...hit, rows: keptRows, hashes: keptHashes, lineNumbers: keptLineNumbers, fragmented: keptFragmented, texts: keptTexts };
           hits.push(displayHit);
           if (rowTruncated) countOnly = true;
         }
@@ -705,6 +716,20 @@ export function regGrep(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
           : notes.length > 0
             ? `No matches found.\n${notes.join("\n")}`
             : "No matches found.";
+        const structuredContent: GrepStructured = {
+          ok: true,
+          kind: "grep",
+          text,
+          matches,
+          files: hits.length,
+          truncated,
+          results: hits.map((hit) => ({
+            path: hit.displayPath,
+            matchLines: [...hit.matchLines],
+            lines: hit.hashes.map((anchor, index) => anchoredLine(hit.lineNumbers[index]!, hit.texts[index]!, anchor)),
+            hadUtf8DecodeErrors: hit.hadUtf8DecodeErrors,
+          })),
+        };
         return {
           content: [{ type: "text", text }],
           details: {
@@ -716,8 +741,9 @@ export function regGrep(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
               truncated,
             },
           },
+          structuredContent,
         };
-      });
+      }));
     },
   });
 }

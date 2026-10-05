@@ -157,7 +157,7 @@ describe("buildChanged", () => {
       snapshotId: "snap1",
       editMeta: { editsAttempted: 1, noopEditsCount: 0, firstChangedLine: 1, lastChangedLine: 2, addedLines: 0, removedLines: 2 },
     });
-    expect(output.content[0].text).toBe("File is empty. Use replace to insert content.");
+    expect(output.content[0].text).toBe(`File is empty. Use replace on ${resultHashes[0]}│ to insert content.`);
   });
 
   it("computes added_lines and removed_lines from editMeta", async () => {
@@ -259,7 +259,7 @@ describe("buildChanged", () => {
       originalHashes,
       result,
       resultHashes,
-      warnings: [String.raw`[H_LITERAL_ESCAPE] replacement_lines: "\u200b" written as literal text`],
+      warnings: [String.raw`[H_LITERAL_ESCAPE] text: "\u200b" written as literal text`],
       snapshotId: "snap1",
       editMeta: { editsAttempted: 1, noopEditsCount: 0, firstChangedLine: 2, lastChangedLine: 2, addedLines: 1, removedLines: 1 },
       spans: [{ start: 1, end: 1, replacementCount: 1 }],
@@ -281,7 +281,7 @@ describe("buildChanged", () => {
       originalHashes,
       result,
       resultHashes,
-      warnings: [String.raw`[H_LITERAL_ESCAPE] replacement_lines: "\u200b" written as literal text`],
+      warnings: [String.raw`[H_LITERAL_ESCAPE] text: "\u200b" written as literal text`],
       snapshotId: "snap1",
       editMeta: { editsAttempted: 1, noopEditsCount: 0, addedLines: 4, removedLines: 1 },
       spans: [{ start: 1, end: 1, replacementCount: 4 }],
@@ -327,7 +327,7 @@ describe("buildChanged", () => {
       originalHashes,
       result,
       resultHashes,
-      warnings: [String.raw`[H_LITERAL_ESCAPE] replacement_lines: "\u200b" written as literal text`],
+      warnings: [String.raw`[H_LITERAL_ESCAPE] text: "\u200b" written as literal text`],
       snapshotId: "snap1",
       editMeta: { editsAttempted: 2, noopEditsCount: 0, firstChangedLine: 2, lastChangedLine: 5, addedLines: 3, removedLines: 2 },
       spans: [{ start: 1, end: 1, replacementCount: 2 }, { start: 3, end: 3, replacementCount: 1 }],

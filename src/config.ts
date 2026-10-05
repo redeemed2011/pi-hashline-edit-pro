@@ -14,24 +14,26 @@ export interface Config {
   autoRead: boolean;
   anchorGrepEnabled: boolean;
   copyMoveEnabled?: boolean;
-  replaceWithinEnabled?: boolean;
+  replaceMatchEnabled?: boolean;
   autoReadAll?: AutoReadAllMode;
   autoReadAllIgnore?: string[];
   requirePath?: boolean;
   strictInput?: boolean;
   diffContextLines?: number;
+  disableOnModels?: string[];
 }
 
 const DEFAULT_CONFIG: Config = {
   autoRead: true,
   anchorGrepEnabled: true,
   copyMoveEnabled: true,
-  replaceWithinEnabled: true,
+  replaceMatchEnabled: true,
   autoReadAll: "off",
   autoReadAllIgnore: [],
   requirePath: false,
   strictInput: false,
-  diffContextLines: DEFAULT_DIFF_CONTEXT_LINES
+  diffContextLines: DEFAULT_DIFF_CONTEXT_LINES,
+  disableOnModels: []
 };
 
 function parseAutoReadAllMode(value: unknown): AutoReadAllMode {
@@ -45,13 +47,13 @@ export function normalizeAutoReadAllIgnoreEntry(entry: string): string {
   return entry.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
 }
 
-export function parseAutoReadAllIgnore(value: unknown): string[] {
+function parseStringList(value: unknown, normalize: (entry: string) => string): string[] {
   const raw = typeof value === "string" ? value.split(",") : Array.isArray(value) ? value : [];
   const seen = new Set<string>();
   const out: string[] = [];
   for (const item of raw) {
     if (typeof item !== "string") continue;
-    const cleaned = normalizeAutoReadAllIgnoreEntry(item);
+    const cleaned = normalize(item);
     if (cleaned.length === 0) continue;
     const lower = cleaned.toLowerCase();
     if (seen.has(lower)) continue;
@@ -59,6 +61,14 @@ export function parseAutoReadAllIgnore(value: unknown): string[] {
     out.push(cleaned);
   }
   return out;
+}
+
+export function parseAutoReadAllIgnore(value: unknown): string[] {
+  return parseStringList(value, normalizeAutoReadAllIgnoreEntry);
+}
+
+export function parseDisableOnModels(value: unknown): string[] {
+  return parseStringList(value, (entry) => entry.trim());
 }
 
 export function normalizeDiffContextLines(value: unknown): number {
@@ -77,22 +87,24 @@ function parseConfig(content: string): Config {
   const autoRead = parsed.autoRead;
   const anchorGrepEnabled = parsed.anchorGrepEnabled;
   const copyMoveEnabled = parsed.copyMoveEnabled;
-  const replaceWithinEnabled = parsed.replaceWithinEnabled;
+  const replaceMatchEnabled = parsed.replaceMatchEnabled;
   const autoReadAll = parsed.autoReadAll;
   const requirePath = parsed.requirePath;
   const strictInput = parsed.strictInput;
   const diffContextLines = parsed.diffContextLines;
   const autoReadAllIgnore = parsed.autoReadAllIgnore;
+  const disableOnModels = parsed.disableOnModels;
   return {
     autoRead: typeof autoRead === "boolean" ? autoRead : DEFAULT_CONFIG.autoRead,
     anchorGrepEnabled: typeof anchorGrepEnabled === "boolean" ? anchorGrepEnabled : DEFAULT_CONFIG.anchorGrepEnabled,
     copyMoveEnabled: typeof copyMoveEnabled === "boolean" ? copyMoveEnabled : DEFAULT_CONFIG.copyMoveEnabled,
-    replaceWithinEnabled: typeof replaceWithinEnabled === "boolean" ? replaceWithinEnabled : DEFAULT_CONFIG.replaceWithinEnabled,
+    replaceMatchEnabled: typeof replaceMatchEnabled === "boolean" ? replaceMatchEnabled : DEFAULT_CONFIG.replaceMatchEnabled,
     autoReadAll: parseAutoReadAllMode(autoReadAll),
     requirePath: typeof requirePath === "boolean" ? requirePath : DEFAULT_CONFIG.requirePath,
     strictInput: typeof strictInput === "boolean" ? strictInput : DEFAULT_CONFIG.strictInput,
     diffContextLines: normalizeDiffContextLines(diffContextLines),
     autoReadAllIgnore: parseAutoReadAllIgnore(autoReadAllIgnore),
+    disableOnModels: parseDisableOnModels(disableOnModels),
   };
 }
 
@@ -200,7 +212,7 @@ export async function writeConfig(config: Config): Promise<void> {
 }
 
 
-type ToggleKey = "autoRead" | "anchorGrepEnabled" | "copyMoveEnabled" | "replaceWithinEnabled" | "requirePath" | "strictInput";
+type ToggleKey = "autoRead" | "anchorGrepEnabled" | "copyMoveEnabled" | "replaceMatchEnabled" | "requirePath" | "strictInput";
 
 async function toggleFlag(key: ToggleKey): Promise<boolean> {
   const config = await updateConfig((c) => { c[key] = !(c[key] === true); });
@@ -209,7 +221,7 @@ async function toggleFlag(key: ToggleKey): Promise<boolean> {
 export const toggleAutoRead = (): Promise<boolean> => toggleFlag("autoRead");
 export const toggleAnchorGrep = (): Promise<boolean> => toggleFlag("anchorGrepEnabled");
 export const toggleCopyMove = (): Promise<boolean> => toggleFlag("copyMoveEnabled");
-export const toggleReplaceWithin = (): Promise<boolean> => toggleFlag("replaceWithinEnabled");
+export const toggleReplaceMatch = (): Promise<boolean> => toggleFlag("replaceMatchEnabled");
 export async function cycleAutoReadAllMode(): Promise<AutoReadAllMode> {
   let next: AutoReadAllMode = "off";
   await updateConfig((c) => {
@@ -242,4 +254,15 @@ export async function setAutoReadAllIgnore(dirs: string[]): Promise<string[]> {
 }
 export async function setAutoReadAllIgnoreFromText(text: string): Promise<string[]> {
   return setAutoReadAllIgnore(text.split(","));
+}
+export async function setDisableOnModels(patterns: string[]): Promise<string[]> {
+  let next: string[] = [];
+  await updateConfig((c) => {
+    next = parseDisableOnModels(patterns);
+    c.disableOnModels = next;
+  });
+  return next;
+}
+export async function setDisableOnModelsFromText(text: string): Promise<string[]> {
+  return setDisableOnModels(text.split(","));
 }

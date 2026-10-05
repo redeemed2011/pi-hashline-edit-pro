@@ -3,18 +3,18 @@ import { describe, expect, it } from "vitest";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { lineHashes } from "../../src/hashline";
 import { compPreview, editToolSchema, regReplace } from "../../src/replace";
-import { makeFakePiRegistry, withTempFile, useTestHome } from "../support/fixtures";
+import { makeFakePiRegistry, withTempFile, useTestHome, toolError } from "../support/fixtures";
 useTestHome();
 
 describe("editToolSchema", () => {
-  it("has remove_from, remove_to, and replacement_lines at top level", () => {
+  it("has remove_from, remove_to, and text at top level", () => {
     const schema = editToolSchema as any;
     expect(schema.type).toBe("object");
     const props = schema.properties;
     expect(props.path).toBeUndefined();
     expect(props.remove_from).toBeDefined();
     expect(props.remove_to).toBeDefined();
-    expect(props.replacement_lines).toBeDefined();
+    expect(props.text).toBeDefined();
     expect(props.changes).toBeUndefined();
     expect(schema.additionalProperties).toBe(true);
   });
@@ -30,18 +30,18 @@ describe("regReplace", () => {
     expect(tool.parameters).toBe(editToolSchema);
   });
 
-  it("prepareArguments normalizes replace_from/replace_to to remove_from/remove_to", () => {
+  it("leaves replace_from/replace_to untouched in prepareArguments", () => {
     const { pi, getTool } = makeFakePiRegistry();
     regReplace(pi);
     const tool = getTool("replace");
     const result = tool.prepareArguments({
       replace_from: "ATIm", replace_to: "BeSR",
-      replacement_lines: ["new"],
+      text: ["new"],
     });
-    expect(result.remove_from).toBe("ATIm");
-    expect(result.remove_to).toBe("BeSR");
-    expect(result.replace_from).toBeUndefined();
-    expect(result.replace_to).toBeUndefined();
+    expect(result.replace_from).toBe("ATIm");
+    expect(result.replace_to).toBe("BeSR");
+    expect(result.remove_from).toBeUndefined();
+    expect(result.remove_to).toBeUndefined();
   });
 
 
@@ -57,7 +57,7 @@ describe("regReplace", () => {
         "e1",
         {
           remove_from: hashes[1]!, remove_to: hashes[1]!,
-          replacement_lines: ["BeSR"],
+          text: ["BeSR"],
         },
         undefined,
         undefined,
@@ -69,49 +69,47 @@ describe("regReplace", () => {
     });
   });
 
-  it("replaces a single line via the replace_from/replace_to aliases", async () => {
+  it("rejects the replace_from/replace_to aliases", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
       regReplace(pi);
       const tool = getTool("replace");
       const hashes = await lineHashes("aaa\nbbb\nccc\n", join(cwd, "sample.txt"));
 
-      const result = await tool.execute(
-        "e1",
-        {
-          replace_from: hashes[1]!, replace_to: hashes[1]!,
-          replacement_lines: ["BeSR"],
-        },
-        undefined,
-        undefined,
-        { cwd } as any,
-      );
-
-      expect(result.content[0].text).toContain("Successfully replaced in sample.txt");
-      expect(result.content[0].text).toContain("Added 1 line(s), removed 1 line(s).");
+      await expect(
+        tool.execute(
+          "e1",
+          {
+            replace_from: hashes[1]!, replace_to: hashes[1]!,
+            text: ["BeSR"],
+          },
+          undefined,
+          undefined,
+          { cwd } as any,
+        ),
+      ).rejects.toThrow(/\[E_BAD_SHAPE\]/);
     });
   });
 
-  it("replaces a single line via the from/to aliases", async () => {
+  it("rejects the from/to aliases", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
       regReplace(pi);
       const tool = getTool("replace");
       const hashes = await lineHashes("aaa\nbbb\nccc\n", join(cwd, "sample.txt"));
 
-      const result = await tool.execute(
-        "e1",
-        {
-          from: hashes[1]!, to: hashes[1]!,
-          replacement_lines: ["BeSR"],
-        },
-        undefined,
-        undefined,
-        { cwd } as any,
-      );
-
-      expect(result.content[0].text).toContain("Successfully replaced in sample.txt");
-      expect(result.content[0].text).toContain("Added 1 line(s), removed 1 line(s).");
+      await expect(
+        tool.execute(
+          "e1",
+          {
+            from: hashes[1]!, to: hashes[1]!,
+            text: ["BeSR"],
+          },
+          undefined,
+          undefined,
+          { cwd } as any,
+        ),
+      ).rejects.toThrow(/\[E_BAD_SHAPE\]/);
     });
   });
 
@@ -126,7 +124,7 @@ describe("regReplace", () => {
         "e1",
         {
           remove_from: hashes[1]!, remove_to: hashes[2]!,
-          replacement_lines: ["BeSR", "DAfo"],
+          text: ["BeSR", "DAfo"],
         },
         undefined,
         undefined,
@@ -149,7 +147,7 @@ describe("regReplace", () => {
         "e1",
         {
           remove_from: hashes[1]!, remove_to: hashes[1]!,
-          replacement_lines: [],
+          text: [],
         },
         undefined,
         undefined,
@@ -172,7 +170,7 @@ describe("regReplace", () => {
         "e1",
         {
           remove_from: hashes[1]!, remove_to: hashes[1]!,
-          replacement_lines: ["bbb"],
+          text: ["bbb"],
         },
         undefined,
         undefined,
@@ -190,40 +188,37 @@ describe("regReplace", () => {
       regReplace(pi);
       const tool = getTool("replace");
 
-      await expect(
-        tool.execute(
-          "e1",
-          {
-            remove_from: "PyBY", remove_to: "PyBY",
-            replacement_lines: ["x"],
-          },
-          undefined,
-          undefined,
-          { cwd } as any,
-        ),
-      ).rejects.toThrow(/E_STALE_ANCHOR/);
+      expect(await toolError(() => tool.execute(
+        "e1",
+        {
+          remove_from: "PyBY", remove_to: "PyBY",
+          text: ["x"],
+        },
+        undefined,
+        undefined,
+        { cwd } as any,
+      ))).toMatch(/E_STALE_ANCHOR/);
     });
   });
 
-  it("rejects deleting an entire non-empty file", async () => {
+  it("deletes an entire non-empty file", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
       regReplace(pi);
       const tool = getTool("replace");
       const hashes = await lineHashes("aaa\nbbb\n", join(cwd, "sample.txt"));
 
-      await expect(
-        tool.execute(
-          "e1",
-          {
-            remove_from: hashes[0]!, remove_to: hashes[1]!,
-            replacement_lines: [],
-          },
-          undefined,
-          undefined,
-          { cwd } as any,
-        ),
-      ).rejects.toThrow(/E_WOULD_EMPTY/);
+      const result = await tool.execute(
+        "e1",
+        {
+          remove_from: hashes[0]!, remove_to: hashes[1]!,
+          text: [],
+        },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+      expect(result.content[0].text).toContain("File is empty");
     });
   });
 
@@ -234,19 +229,17 @@ describe("regReplace", () => {
       const tool = getTool("replace");
       const hashes = await lineHashes("aaa\nbbb\nccc\n", join(cwd, "sample.txt"));
 
-      await expect(
-        tool.execute(
-          "e1",
-          {
-            remove_from: hashes[1]!, remove_to: hashes[1]!,
-            replacement_lines: ["BeSR"],
-            unknown_field: "bad",
-          } as any,
-          undefined,
-          undefined,
-          { cwd } as any,
-        ),
-      ).rejects.toThrow(/unknown_field/);
+      expect(await toolError(() => tool.execute(
+        "e1",
+        {
+          remove_from: hashes[1]!, remove_to: hashes[1]!,
+          text: ["BeSR"],
+          unknown_field: "bad",
+        } as any,
+        undefined,
+        undefined,
+        { cwd } as any,
+      ))).toMatch(/unknown_field/);
     });
   });
 
@@ -261,7 +254,7 @@ describe("regReplace", () => {
         "e1",
         {
           remove_from: hashes[1]!, remove_to: hashes[1]!,
-          replacement_lines: ["BeSR"],
+          text: ["BeSR"],
         },
         undefined,
         undefined,
@@ -284,7 +277,7 @@ describe("regReplace", () => {
         "e1",
         {
           remove_from: hashes[1]!, remove_to: hashes[1]!,
-          replacement_lines: ["BETA"],
+          text: ["BETA"],
         },
         undefined,
         undefined,
@@ -296,7 +289,7 @@ describe("regReplace", () => {
     });
   });
 
-  it("expands a stringified replacement_lines array", async () => {
+  it("expands a stringified text array", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { pi, getTool } = makeFakePiRegistry();
       regReplace(pi);
@@ -307,7 +300,7 @@ describe("regReplace", () => {
         "e1",
         {
           remove_from: hashes[1]!, remove_to: hashes[1]!,
-          replacement_lines: ['["B1", "B2"]'],
+          text: ['["B1", "B2"]'],
         },
         undefined,
         undefined,
@@ -330,7 +323,7 @@ describe("regReplace", () => {
         "e1",
         {
           remove_from: hashes[1]!, remove_to: hashes[1]!,
-          replacement_lines: ["['B1', 'B2',]"],
+          text: ["['B1', 'B2',]"],
         },
         undefined,
         undefined,
@@ -342,7 +335,7 @@ describe("regReplace", () => {
     });
   });
 
-  it("rejects a NUL byte in replacement_lines and leaves the file unchanged", async () => {
+  it("rejects a NUL byte in text and leaves the file unchanged", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { pi, getTool } = makeFakePiRegistry();
       regReplace(pi);
@@ -350,16 +343,16 @@ describe("regReplace", () => {
       const hashes = await lineHashes("aaa\nbbb\nccc\n", path);
       const nul = String.fromCharCode(0);
 
-      await expect(tool.execute(
+      expect(await toolError(() => tool.execute(
         "e1",
         {
           remove_from: hashes[1]!, remove_to: hashes[1]!,
-          replacement_lines: [`a${nul}b`],
+          text: [`a${nul}b`],
         },
         undefined,
         undefined,
         { cwd } as any,
-      )).rejects.toThrow(/NUL byte/);
+      ))).toMatch(/NUL byte/);
 
       expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
     });
@@ -373,16 +366,16 @@ describe("regReplace", () => {
       const hashes = await lineHashes("aaa\nbbb\nccc\n", path);
       const backslash = String.fromCharCode(92);
 
-      await expect(tool.execute(
+      expect(await toolError(() => tool.execute(
         "e1",
         {
           remove_from: hashes[1]!, remove_to: hashes[1]!,
-          replacement_lines: [`["${backslash}u0000"]`],
+          text: [`["${backslash}u0000"]`],
         },
         undefined,
         undefined,
         { cwd } as any,
-      )).rejects.toThrow(/NUL byte/);
+      ))).toMatch(/NUL byte/);
 
       expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
     });
@@ -395,16 +388,16 @@ describe("regReplace", () => {
       const tool = getTool("replace");
       const hashes = await lineHashes("aaa\nbbb\nccc\n", path);
 
-      await expect(tool.execute(
+      await expect(toolError(() => tool.execute(
         "e1",
         {
           remove_from: hashes[1]!, remove_to: hashes[1]!,
-          replacement_lines: ['["B1", 7]'],
+          text: ['["B1", 7]'],
         },
         undefined,
         undefined,
         { cwd } as any,
-      )).rejects.toThrow(/\[E_BAD_SHAPE\]/);
+      ))).resolves.toMatch(/\[E_BAD_SHAPE\]/);
 
       expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
     });
@@ -423,16 +416,16 @@ describe("regReplace", () => {
       const tool = getTool("replace");
       const hashes = await lineHashes("aaa\nbbb\nccc\n", path);
 
-      await expect(tool.execute(
+      await expect(toolError(() => tool.execute(
         "e1",
         {
           remove_from: hashes[1]!, remove_to: hashes[1]!,
-          replacement_lines: ['["B1", 7]'],
+          text: ['["B1", 7]'],
         },
         undefined,
         undefined,
         { cwd } as any,
-      )).rejects.toThrow(/\[E_BAD_SHAPE\]/);
+      ))).resolves.toMatch(/\[E_BAD_SHAPE\]/);
 
       expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
     });
@@ -442,32 +435,32 @@ describe("regReplace", () => {
     const { pi, getTool } = makeFakePiRegistry();
     regReplace(pi);
     const tool = getTool("replace");
-    await expect(tool.execute(
+    expect(await toolError(() => tool.execute(
       "e1",
-      { remove_from: "!!!!", remove_to: "!!!!", replacement_lines: ["x"] },
+      { remove_from: "!!!!", remove_to: "!!!!", text: ["x"] },
       undefined, undefined, { cwd: "/tmp" } as any,
-    )).rejects.toThrow(/\[E_BAD_REF\]/);
+    ))).toMatch(/\[E_BAD_REF\]/);
   });
 
   it("rejects a passed path", async () => {
     const { pi, getTool } = makeFakePiRegistry();
     regReplace(pi);
     const tool = getTool("replace");
-    await expect(tool.execute(
+    expect(await toolError(() => tool.execute(
       "e1",
-      { path: "sample.ts", remove_from: "PyBY", remove_to: "PyBY", replacement_lines: ["x"] } as any,
+      { path: "sample.ts", remove_from: "PyBY", remove_to: "PyBY", text: ["x"] } as any,
       undefined, undefined, { cwd: "/tmp" } as any,
-    )).rejects.toThrow(/E_BAD_SHAPE/);
+    ))).toMatch(/E_BAD_SHAPE/);
   });
 
   it("rethrows aborts from preview computation", async () => {
     const controller = new AbortController();
     controller.abort();
-    await expect(compPreview({ remove_from: "!!!!", remove_to: "!!!!", replacement_lines: ["x"] }, "/tmp", controller.signal)).rejects.toThrow();
+    await expect(compPreview({ remove_from: "!!!!", remove_to: "!!!!", text: ["x"] }, "/tmp", controller.signal)).rejects.toThrow();
   });
 });
 
-describe("regReplace - stringified replacement_lines payloads", () => {
+describe("regReplace - stringified text payloads", () => {
   const glmMapPayload = '["    \\"pi-hashline-edit-pro\\": \\"^4.3.5\\","].map(s => s)';
   const glmSlicePayload = '["    \\"@cortexkit/aft\\": \\"^0.57.0\\",", "    \\"@cortexkit/aft-pi\\": \\"^0.57.0\\","].slice(0, 3)';
   const glmMalformedPayload = '["    \\"pi-hashline-edit-pro\\": \\"^4.3.5\\",""]';
@@ -481,7 +474,7 @@ describe("regReplace - stringified replacement_lines payloads", () => {
 
       const result = await tool.execute(
         "e1",
-        { remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: [glmMapPayload] },
+        { remove_from: hashes[1]!, remove_to: hashes[1]!, text: [glmMapPayload] },
         undefined,
         undefined,
         { cwd } as any,
@@ -502,7 +495,7 @@ describe("regReplace - stringified replacement_lines payloads", () => {
 
       const result = await tool.execute(
         "e1",
-        { remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: [glmSlicePayload] },
+        { remove_from: hashes[1]!, remove_to: hashes[1]!, text: [glmSlicePayload] },
         undefined,
         undefined,
         { cwd } as any,
@@ -520,13 +513,13 @@ describe("regReplace - stringified replacement_lines payloads", () => {
       const tool = getTool("replace");
       const hashes = await lineHashes("aaa\nbbb\nccc\n", join(cwd, "sample.txt"));
 
-      await expect(tool.execute(
+      await expect(toolError(() => tool.execute(
         "e1",
-        { remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: [glmMalformedPayload] },
+        { remove_from: hashes[1]!, remove_to: hashes[1]!, text: [glmMalformedPayload] },
         undefined,
         undefined,
         { cwd } as any,
-      )).rejects.toThrow(/\[E_BAD_SHAPE\]/);
+      ))).resolves.toMatch(/\[E_BAD_SHAPE\]/);
 
       expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
     });
@@ -544,7 +537,7 @@ describe("regReplace - stringified replacement_lines payloads", () => {
         {
           remove_from: hashes[1]!,
           remove_to: hashes[1]!,
-          replacement_lines: '["      \\"threshold\\": 85,"]',
+          text: '["      \\"threshold\\": 85,"]',
         },
         undefined,
         undefined,

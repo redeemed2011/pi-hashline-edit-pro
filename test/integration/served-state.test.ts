@@ -3,7 +3,7 @@ import { readFile, writeFile } from "fs/promises";
 import { lineHashes } from "../../src/hashline";
 import { shutdownHashStore } from "../../src/hash-store";
 import { ownersForPath, initRegistry, resetRegistryForTests } from "../../src/anchor-registry";
-import { withTempFile, setupIntegrationTest, getText, extractHash, makePiStub } from "../support/fixtures";
+import { withTempFile, setupIntegrationTest, getText, extractHash, makePiStub, toolError } from "../support/fixtures";
 import { toCwd } from "../../src/paths";
 import { resolveTarget } from "../../src/fs-write";
 
@@ -35,23 +35,17 @@ describe("served-state range verification", () => {
 
       await writeFile(path, "a\nB\nc\nd\n", "utf-8");
 
-      let caught: Error | undefined;
-      try {
-        await editTool.execute(
-          "e1",
-          { remove_from: aHash, remove_to: dHash, replacement_lines: ["a", "x", "d"] },
-          undefined,
-          undefined,
-          ctx,
-        );
-      } catch (error) {
-        caught = error as Error;
-      }
-      expect(caught).toBeDefined();
-      expect(caught!.message).toMatch(/E_RANGE_STALE/);
-      expect(caught!.message).toContain("Current range with fresh anchors");
+      const message = await toolError(() => editTool.execute(
+        "e1",
+        { remove_from: aHash, remove_to: dHash, text: ["a", "x", "d"] },
+        undefined,
+        undefined,
+        ctx,
+      ));
+      expect(message).toMatch(/E_RANGE_STALE/);
+      expect(message).toContain("Current range with fresh anchors");
       expect(await readFile(path, "utf-8")).toBe("a\nB\nc\nd\n");
-      const rows = feedbackRows(caught!.message);
+      const rows = feedbackRows(message);
       expect(rows).toHaveLength(4);
       expect(rows[0]).toMatch(/│a$/);
       expect(rows[1]).toMatch(/│B$/);
@@ -70,25 +64,20 @@ describe("served-state range verification", () => {
 
       await writeFile(path, "a\nB\nc\nd\n", "utf-8");
 
-      let feedback = "";
-      try {
-        await editTool.execute(
-          "e1",
-          { remove_from: aHash, remove_to: dHash, replacement_lines: ["a", "x", "d"] },
-          undefined,
-          undefined,
-          ctx,
-        );
-      } catch (error) {
-        feedback = (error as Error).message;
-      }
+      const feedback = await toolError(() => editTool.execute(
+        "e1",
+        { remove_from: aHash, remove_to: dHash, text: ["a", "x", "d"] },
+        undefined,
+        undefined,
+        ctx,
+      ));
       const rows = feedbackRows(feedback);
       const freshA = extractHash(rows[0]!);
       const freshD = extractHash(rows[rows.length - 1]!);
 
       const retry = await editTool.execute(
         "e2",
-        { remove_from: freshA, remove_to: freshD, replacement_lines: ["a", "x", "d"] },
+        { remove_from: freshA, remove_to: freshD, text: ["a", "x", "d"] },
         undefined,
         undefined,
         ctx,
@@ -109,18 +98,13 @@ describe("served-state range verification", () => {
 
       await writeFile(path, "A\nb\nC\nd\n", "utf-8");
 
-      let staleError = "";
-      try {
-        await editTool.execute(
-          "e1",
-          { remove_from: aHash, remove_to: dHash, replacement_lines: ["x"] },
-          undefined,
-          undefined,
-          ctx,
-        );
-      } catch (error) {
-        staleError = (error as Error).message;
-      }
+      const staleError = await toolError(() => editTool.execute(
+        "e1",
+        { remove_from: aHash, remove_to: dHash, text: ["x"] },
+        undefined,
+        undefined,
+        ctx,
+      ));
       expect(staleError).toMatch(/E_STALE_ANCHOR/);
       expect(staleError).toContain("Current context around resolved anchor");
 
@@ -133,7 +117,7 @@ describe("served-state range verification", () => {
 
       const retry = await editTool.execute(
         "e2",
-        { remove_from: contextHash, remove_to: contextHash, replacement_lines: ["c"] },
+        { remove_from: contextHash, remove_to: contextHash, text: ["c"] },
         undefined,
         undefined,
         ctx,
@@ -156,7 +140,7 @@ describe("served-state range verification", () => {
 
       const result = await editTool.execute(
         "e1",
-        { remove_from: bHash, remove_to: cHash, replacement_lines: ["x"] },
+        { remove_from: bHash, remove_to: cHash, text: ["x"] },
         undefined,
         undefined,
         ctx,
@@ -180,7 +164,7 @@ describe("served-state range verification", () => {
 
       const result = await editTool.execute(
         "e1",
-        { remove_from: aHash, remove_to: dHash, replacement_lines: ["a", "x", "d"] },
+        { remove_from: aHash, remove_to: dHash, text: ["a", "x", "d"] },
         undefined,
         undefined,
         ctx,
@@ -199,22 +183,16 @@ describe("served-state range verification", () => {
       const aHash = extractHash(getText(r1).split("\n").find((l: string) => l.includes("│a"))!);
       const fHash = extractHash(getText(r2).split("\n").find((l: string) => l.includes("│f"))!);
 
-      let caught: Error | undefined;
-      try {
-        await editTool.execute(
-          "e1",
-          { remove_from: aHash, remove_to: fHash, replacement_lines: ["x"] },
-          undefined,
-          undefined,
-          ctx,
-        );
-      } catch (error) {
-        caught = error as Error;
-      }
-      expect(caught).toBeDefined();
-      expect(caught!.message).toMatch(/E_RANGE_STALE/);
+      const message = await toolError(() => editTool.execute(
+        "e1",
+        { remove_from: aHash, remove_to: fHash, text: ["x"] },
+        undefined,
+        undefined,
+        ctx,
+      ));
+      expect(message).toMatch(/E_RANGE_STALE/);
       expect(await readFile(path, "utf-8")).toBe("a\nb\nc\nd\ne\nf\n");
-      const rows = feedbackRows(caught!.message);
+      const rows = feedbackRows(message);
       expect(rows).toHaveLength(6);
       expect(rows[2]).toMatch(/│c$/);
       expect(rows[3]).toMatch(/│d$/);
@@ -232,7 +210,7 @@ describe("served-state range verification", () => {
 
       const result = await editTool.execute(
         "e1",
-        { remove_from: aHash, remove_to: dHash, replacement_lines: [] },
+        { remove_from: aHash, remove_to: dHash, text: [] },
         undefined,
         undefined,
         ctx,
@@ -251,15 +229,13 @@ describe("served-state range verification", () => {
       const abs = await resolveTarget(toCwd("sample.ts", cwd));
       const hashes = await lineHashes("a\nb\nc\nd\ne\n", abs);
 
-      await expect(
-        editTool.execute(
-          "e1",
-          { remove_from: aHash, remove_to: hashes[3]!, replacement_lines: [] },
-          undefined,
-          undefined,
-          ctx,
-        ),
-      ).rejects.toThrow(/E_RANGE_STALE/);
+      expect(await toolError(() => editTool.execute(
+        "e1",
+        { remove_from: aHash, remove_to: hashes[3]!, text: [] },
+        undefined,
+        undefined,
+        ctx,
+      ))).toMatch(/E_RANGE_STALE/);
       expect(await readFile(path, "utf-8")).toBe("a\nb\nc\nd\ne\n");
     });
   });
@@ -273,7 +249,7 @@ describe("served-state range verification", () => {
       const aHash = extractHash(headLines.find((l: string) => l.includes("│a"))!);
       const first = await editTool.execute(
         "e1",
-        { remove_from: aHash, remove_to: aHash, replacement_lines: ["A"] },
+        { remove_from: aHash, remove_to: aHash, text: ["A"] },
         undefined,
         undefined,
         ctx,
@@ -284,7 +260,7 @@ describe("served-state range verification", () => {
       const jHash = extractHash(getText(tail).split("\n").find((l: string) => l.includes("│j"))!);
       const second = await editTool.execute(
         "e2",
-        { remove_from: jHash, remove_to: jHash, replacement_lines: ["J"] },
+        { remove_from: jHash, remove_to: jHash, text: ["J"] },
         undefined,
         undefined,
         ctx,
@@ -295,15 +271,13 @@ describe("served-state range verification", () => {
       const aHashAfter = extractHash(firstDiff.split("\n").find((l: string) => l.startsWith("+") && l.includes("│A"))!).replace(/^[+ ]/, "");
       const secondDiff = (second.details as { diff?: string } | undefined)?.diff ?? "";
       const jHashAfter = extractHash(secondDiff.split("\n").find((l: string) => l.startsWith("+") && l.includes("│J"))!).replace(/^[+ ]/, "");
-      await expect(
-        editTool.execute(
-          "e3",
-          { remove_from: aHashAfter, remove_to: jHashAfter, replacement_lines: ["X"] },
-          undefined,
-          undefined,
-          ctx,
-        ),
-      ).rejects.toThrow(/E_RANGE_STALE/);
+      expect(await toolError(() => editTool.execute(
+        "e3",
+        { remove_from: aHashAfter, remove_to: jHashAfter, text: ["X"] },
+        undefined,
+        undefined,
+        ctx,
+      ))).toMatch(/E_RANGE_STALE/);
       expect(await readFile(path, "utf-8")).toBe("A\nb\nc\nd\ne\nf\ng\nh\ni\nJ\n");
     });
   });
@@ -319,7 +293,7 @@ describe("served-state range verification", () => {
 
       const result = await editTool.execute(
         "e1",
-        { remove_from: aHash, remove_to: bHash, replacement_lines: ["x"] },
+        { remove_from: aHash, remove_to: bHash, text: ["x"] },
         undefined,
         undefined,
         ctx,
@@ -336,7 +310,7 @@ describe("served-state range verification", () => {
 
       const result = await editTool.execute(
         "e1",
-        { remove_from: hashes[0]!, remove_to: hashes[0]!, replacement_lines: ["A"] },
+        { remove_from: hashes[0]!, remove_to: hashes[0]!, text: ["A"] },
         undefined,
         undefined,
         ctx,
@@ -369,7 +343,7 @@ describe("served-state range verification", () => {
 
       const result = await editTool.execute(
         "e1",
-        { remove_from: bHash, remove_to: bHash, replacement_lines: ["B"] },
+        { remove_from: bHash, remove_to: bHash, text: ["B"] },
         undefined,
         undefined,
         ctx,
@@ -394,7 +368,7 @@ describe("served-state range verification", () => {
 
       const edited = await editTool.execute(
         "e1",
-        { remove_from: bHash, remove_to: bHash, replacement_lines: ["B"] },
+        { remove_from: bHash, remove_to: bHash, text: ["B"] },
         undefined,
         undefined,
         ctx,
@@ -408,7 +382,7 @@ describe("served-state range verification", () => {
 
       const retry = await editTool.execute(
         "e2",
-        { remove_from: bHash, remove_to: bHash, replacement_lines: ["B"] },
+        { remove_from: bHash, remove_to: bHash, text: ["B"] },
         undefined,
         undefined,
         ctx,
@@ -461,23 +435,17 @@ describe("served-state range verification", () => {
 
       await editTool.execute(
         "e1",
-        { remove_from: bHash, remove_to: bHash, replacement_lines: ["B"] },
+        { remove_from: bHash, remove_to: bHash, text: ["B"] },
         undefined, undefined, ctx,
       );
       await writeFile(path, "a\nb\nc\nd\n", "utf-8");
 
-      let caught: Error | undefined;
-      try {
-        await editTool.execute(
-          "e2",
-          { remove_from: bHash, remove_to: bHash, replacement_lines: ["B2"] },
-          undefined, undefined, ctx,
-        );
-      } catch (error) {
-        caught = error as Error;
-      }
-      expect(caught).toBeDefined();
-      expect(caught!.message).toMatch(/E_STALE_ANCHOR/);
+      const message = await toolError(() => editTool.execute(
+        "e2",
+        { remove_from: bHash, remove_to: bHash, text: ["B2"] },
+        undefined, undefined, ctx,
+      ));
+      expect(message).toMatch(/E_STALE_ANCHOR/);
       expect(await readFile(path, "utf-8")).toBe("a\nb\nc\nd\n");
 
       const reread = await readTool.execute("r2", { path: "sample.ts" }, undefined, undefined, ctx);
@@ -486,7 +454,7 @@ describe("served-state range verification", () => {
 
       const retry = await editTool.execute(
         "e3",
-        { remove_from: freshB, remove_to: freshB, replacement_lines: ["B2"] },
+        { remove_from: freshB, remove_to: freshB, text: ["B2"] },
         undefined, undefined, ctx,
       );
       expect(retry.content[0].text).toContain("Successfully replaced");

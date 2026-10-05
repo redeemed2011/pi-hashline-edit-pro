@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { withTempDir, makePiStub } from "../support/fixtures";
+import { withTempDir, makePiStub, toolError } from "../support/fixtures";
 import { mkdir } from "fs/promises";
 import { join } from "path";
 import { isValidHashList } from "../../src/hash-store/validation";
@@ -99,7 +99,7 @@ describe("grep huge quantifier guard", () => {
       const { default: register } = await import("../../index");
       register(pi);
       const grepTool = getTool("anchor_grep");
-      await expect(grepTool.execute("g1", { pattern: "z{1000000}", path: dir }, undefined, undefined, { cwd: dir, signal: undefined } as unknown as never)).rejects.toThrow("[E_UNSAFE_REGEX]");
+      expect(await toolError(() => grepTool.execute("g1", { pattern: "z{1000000}", path: dir }, undefined, undefined, { cwd: dir, signal: undefined } as unknown as never))).toContain("[E_UNSAFE_REGEX]");
     });
   });
 });
@@ -318,22 +318,22 @@ describe("copy/move default", () => {
   });
 });
 
-describe("replace_within default", () => {
-  it("session_start keeps replace_within by default", async () => {
-    await withTempDir("startup-replace-within-on-", async dir => {
+describe("replace_match default", () => {
+  it("session_start keeps replace_match by default", async () => {
+    await withTempDir("startup-replace-match-on-", async dir => {
       const home = join(dir, "home");
       await mkdir(join(home, ".config", "pi-hashline-edit-pro"), { recursive: true });
       vi.stubEnv("HOME", home);
       vi.stubEnv("XDG_CONFIG_HOME", "");
       try {
-        const { pi, handlers, getActive, getTool } = makePiStub(["read", "replace", "replace_within", "insert", "edit"]);
+        const { pi, handlers, getActive, getTool } = makePiStub(["read", "replace", "replace_match", "insert", "edit"]);
         const { default: register } = await import("../../index");
         register(pi);
         const sessionStart = handlers.get("session_start") as (a: unknown, b: unknown) => Promise<void>;
         await sessionStart({}, { cwd: dir, ui: { notify: vi.fn() } });
-        expect(getActive()).toContain("replace_within");
+        expect(getActive()).toContain("replace_match");
         expect(getActive()).not.toContain("edit");
-        expect(getTool("replace").description).toContain("use `replace_within` instead");
+        expect(getTool("replace").description).toContain("use `replace_match` instead");
       } finally {
         vi.unstubAllEnvs();
         const { shutdownHashStore } = await import("../../src/hash-store");
@@ -342,8 +342,8 @@ describe("replace_within default", () => {
     });
   });
 
-  it("session_start removes replace_within when replaceWithinEnabled is false", async () => {
-    await withTempDir("startup-replace-within-off-", async dir => {
+  it("session_start removes replace_match when replaceMatchEnabled is false", async () => {
+    await withTempDir("startup-replace-match-off-", async dir => {
       const home = join(dir, "home");
       await mkdir(join(home, ".config", "pi-hashline-edit-pro"), { recursive: true });
       vi.stubEnv("HOME", home);
@@ -352,16 +352,16 @@ describe("replace_within default", () => {
         const { writeFile } = await import("fs/promises");
         await writeFile(
           join(home, ".config", "pi-hashline-edit-pro", "config.json"),
-          JSON.stringify({ autoRead: true, anchorGrepEnabled: true, replaceWithinEnabled: false }),
+          JSON.stringify({ autoRead: true, anchorGrepEnabled: true, replaceMatchEnabled: false }),
         );
-        const { pi, handlers, getActive, getTool } = makePiStub(["read", "replace", "replace_within", "insert", "edit"]);
+        const { pi, handlers, getActive, getTool } = makePiStub(["read", "replace", "replace_match", "insert", "edit"]);
         const { default: register } = await import("../../index");
         register(pi);
         const sessionStart = handlers.get("session_start") as (a: unknown, b: unknown) => Promise<void>;
         await sessionStart({}, { cwd: dir, ui: { notify: vi.fn() } });
-        expect(getActive()).not.toContain("replace_within");
+        expect(getActive()).not.toContain("replace_match");
         expect(getActive()).toContain("read");
-        expect(getTool("replace").description).not.toContain("replace_within");
+        expect(getTool("replace").description).not.toContain("replace_match");
       } finally {
         vi.unstubAllEnvs();
         const { shutdownHashStore } = await import("../../src/hash-store");
@@ -370,27 +370,27 @@ describe("replace_within default", () => {
     });
   });
 
-  it("hashline-config toggles replace_within", async () => {
-    await withTempDir("toggle-replace-within-", async dir => {
+  it("hashline-config toggles replace_match", async () => {
+    await withTempDir("toggle-replace-match-", async dir => {
       const home = join(dir, "home");
       await mkdir(join(home, ".config", "pi-hashline-edit-pro"), { recursive: true });
       vi.stubEnv("HOME", home);
       vi.stubEnv("XDG_CONFIG_HOME", "");
       try {
-        const { pi, commands, handlers, getActive } = makePiStub(["read", "replace", "replace_within", "insert", "anchor_grep", "undo_last_change"]);
+        const { pi, commands, handlers, getActive } = makePiStub(["read", "replace", "replace_match", "insert", "anchor_grep", "undo_last_change"]);
         const { default: register } = await import("../../index");
         register(pi);
         const sessionStart = handlers.get("session_start") as (a: unknown, b: unknown) => Promise<void>;
         await sessionStart({}, { cwd: dir, ui: { notify: vi.fn() } });
-        expect(getActive()).toContain("replace_within");
+        expect(getActive()).toContain("replace_match");
         const overlay = await openConfigOverlay(commands, dir);
         for (let step = 0; step < 8; step++) overlay.handleInput("j");
         overlay.handleInput(" ");
-        await waitForConfig(async () => (await readConfig()).replaceWithinEnabled === false && !getActive().includes("replace_within"));
-        expect(getActive()).not.toContain("replace_within");
+        await waitForConfig(async () => (await readConfig()).replaceMatchEnabled === false && !getActive().includes("replace_match"));
+        expect(getActive()).not.toContain("replace_match");
         overlay.handleInput(" ");
-        await waitForConfig(async () => (await readConfig()).replaceWithinEnabled === true && getActive().includes("replace_within"));
-        expect(getActive()).toContain("replace_within");
+        await waitForConfig(async () => (await readConfig()).replaceMatchEnabled === true && getActive().includes("replace_match"));
+        expect(getActive()).toContain("replace_match");
       } finally {
         vi.unstubAllEnvs();
         const { shutdownHashStore } = await import("../../src/hash-store");
@@ -428,7 +428,7 @@ describe("hashline-config overlay rendering", () => {
         expect(lines.filter((line) => line.includes("[on]")).length).toBe(0);
         expect(lines.filter((line) => line.includes("[off]")).length).toBe(1);
         overlay.handleInput("k");
-        expect(overlay.render(60).find((line) => line.includes("Replace within"))!).toContain("> ");
+        expect(overlay.render(60).find((line) => line.includes("Disable on models"))!).toContain("> ");
         overlay.handleInput("j");
         expect(overlay.render(60).find((line) => line.includes("Auto-read"))!).toContain("> ");
         overlay.invalidate();
@@ -535,6 +535,41 @@ describe("hashline-config overlay rendering", () => {
         overlay.handleInput(" ");
         await new Promise((resolve) => setTimeout(resolve, 100));
         expect((await readConfig()).diffContextLines).toBe(1);
+      } finally {
+        vi.unstubAllEnvs();
+        const { shutdownHashStore } = await import("../../src/hash-store");
+        shutdownHashStore();
+      }
+    });
+  });
+
+  it("edits the disable on models list through the config command and applies it on the next turn", async () => {
+    await withTempDir("model-gate-overlay-", async dir => {
+      const home = join(dir, "home");
+      await mkdir(join(home, ".config", "pi-hashline-edit-pro"), { recursive: true });
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("XDG_CONFIG_HOME", "");
+      try {
+        const codex = { provider: "openai", id: "gpt-5.1-codex", api: "openai-codex-responses" };
+        const { pi, commands, handlers, getActive } = makePiStub(["read", "replace", "insert", "copy", "move", "anchor_grep", "undo_last_change", "grep"]);
+        const { default: register } = await import("../../index");
+        register(pi);
+        const sessionStart = handlers.get("session_start") as (a: unknown, b: unknown) => Promise<void>;
+        await sessionStart({}, { cwd: dir, model: codex, ui: { notify: vi.fn() } });
+        expect(getActive()).toContain("read");
+        const overlay = await openConfigOverlay(commands, dir);
+        for (let step = 0; step < 9; step++) overlay.handleInput("j");
+        overlay.handleInput(" ");
+        for (const char of "openai/*") overlay.handleInput(char);
+        overlay.handleInput("\r");
+        await waitForConfig(async () => (await readConfig()).disableOnModels?.[0] === "openai/*");
+        expect((await readConfig()).disableOnModels).toEqual(["openai/*"]);
+        const ctx = { cwd: dir, model: codex, hasUI: false, ui: { notify: vi.fn() }, sessionManager: { getBranch: () => [] } };
+        await waitForConfig(async () => {
+          await handlers.get("before_agent_start")!({}, ctx);
+          return !getActive().includes("read");
+        });
+        expect(getActive()).toContain("grep");
       } finally {
         vi.unstubAllEnvs();
         const { shutdownHashStore } = await import("../../src/hash-store");

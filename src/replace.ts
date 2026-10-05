@@ -11,6 +11,7 @@ import {
 import { readNormFile, type NormFile } from "./file-reader";
 import { editToolSchema, buildEditToolSchema, type ReqParams, type RawReqParams, assertReq, normReq } from "./payload-contract";
 import { coerceArrayShapedPayload, literalEscapeHints, splitLines } from "./utils";
+import { editResultSchema, withStructuredErrors } from "./structured";
 import { loadP, loadGuide } from "./prompts";
 import { type FileIdentity } from "./fs-write";
 import { applyEdit,
@@ -82,7 +83,6 @@ export interface ExecPipelineOptions {
   noPersist?: boolean;
   preloadedNorm?: NormFile;
   served?: ReadonlyMap<string, string>;
-  allowEmpty?: boolean;
   stripWarning?: StripWarningLocation;
   endingOverrides?: (LineEnding | undefined)[];
   preserveDeletionSeparators?: boolean;
@@ -126,9 +126,9 @@ function countLineChanges(
 export function buildReplaceHEdit(params: RawReqParams): { edit: HEdit; warnings: string[] } {
   const editWarnings: string[] = [];
   const anchors = { remove_from: params.remove_from, remove_to: params.remove_to };
-  const edit = typeof params.replacement_lines === "string"
-    ? resEdit({ ...anchors, replacement_lines: params.replacement_lines }, editWarnings)
-    : resEdit({ ...anchors, replacement_lines: params.replacement_lines }, editWarnings);
+  const edit = typeof params.text === "string"
+    ? resEdit({ ...anchors, text: params.text }, editWarnings)
+    : resEdit({ ...anchors, text: params.text }, editWarnings);
   return { edit, warnings: editWarnings };
 }
 
@@ -172,7 +172,6 @@ export async function execPipeline(
       originalHashes,
       displayPath,
       served,
-      options?.allowEmpty,
       options?.stripWarning,
     );
   } catch (error) {
@@ -280,21 +279,22 @@ export function buildToolDef(flags: EditToolFlags = DEFAULT_EDIT_FLAGS): ToolDef
     label: "Replace",
     description: prompted.description,
     parameters,
+    outputSchema: editResultSchema,
     promptSnippet: prompted.snippet,
     promptGuidelines: prompted.guidelines,
     ...editToolBase,
     renderCall: editRenderCallWrapper(compPreview),
     renderResult: editRenderResultWrapper,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      return withAnchorSession(ctx, async () => {
+      return withStructuredErrors(signal, { diff: "" }, () => withAnchorSession(ctx, async () => {
         const canonical = normReq(params);
         assertReq(canonical);
         const normalizedParams = canonical;
-        normalizedParams.replacement_lines = coerceArrayShapedPayload(
-          normalizedParams.replacement_lines,
-          "replacement_lines",
+        normalizedParams.text = coerceArrayShapedPayload(
+          normalizedParams.text,
+          "text",
         );
-        const literalEscapes = literalEscapeHints([normalizedParams.replacement_lines], "replacement_lines");
+        const literalEscapes = literalEscapeHints([normalizedParams.text], "text");
         const targetPath = await resolveEditTargetWithRequirement({
           removeFrom: normalizedParams.remove_from,
           removeTo: normalizedParams.remove_to,
@@ -341,7 +341,7 @@ export function buildToolDef(flags: EditToolFlags = DEFAULT_EDIT_FLAGS): ToolDef
             extraWarnings: [...literalEscapes, ...built.warnings],
           });
         });
-      });
+      }));
     },
   };
 }

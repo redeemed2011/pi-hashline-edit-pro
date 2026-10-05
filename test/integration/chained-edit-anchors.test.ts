@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { withTempFile, setupIntegrationTest } from "../support/fixtures";
+import { withTempFile, setupIntegrationTest, toolError } from "../support/fixtures";
 
 describe("chained edit anchors", () => {
   it("returns updated anchors in edit result for a single-line replace", async () => {
@@ -14,7 +14,7 @@ describe("chained edit anchors", () => {
 
       const editResult = await editTool.execute(
         "e1",
-        { remove_from: betaRef, remove_to: betaRef, replacement_lines: ["BETA"] },
+        { remove_from: betaRef, remove_to: betaRef, text: ["BETA"] },
         undefined,
         undefined,
         ctx,
@@ -30,7 +30,7 @@ describe("chained edit anchors", () => {
 
       const editResult2 = await editTool.execute(
         "e2",
-        { remove_from: freshRef, remove_to: freshRef, replacement_lines: ["BETA-CHAINED"] },
+        { remove_from: freshRef, remove_to: freshRef, text: ["BETA-CHAINED"] },
         undefined,
         undefined,
         ctx,
@@ -61,7 +61,7 @@ describe("chained edit anchors", () => {
       const editResult = await editTool.execute(
         "e1",
         {
-          remove_from: line1Ref, remove_to: line15Ref, replacement_lines: newLines,
+          remove_from: line1Ref, remove_to: line15Ref, text: newLines,
         },
         undefined,
         undefined,
@@ -85,7 +85,7 @@ describe("chained edit anchors", () => {
       const newLines = Array.from({ length: 11 }, (_, i) => `EXPANDED ${i + 1}`);
       const editResult = await editTool.execute(
         "e1",
-        { remove_from: targetRef, remove_to: targetRef, replacement_lines: newLines },
+        { remove_from: targetRef, remove_to: targetRef, text: newLines },
         undefined,
         undefined,
         ctx,
@@ -111,24 +111,22 @@ describe("chained edit anchors", () => {
 
       await editTool.execute(
         "e1",
-        { remove_from: betaRef, remove_to: betaRef, replacement_lines: ["BETA"] },
+        { remove_from: betaRef, remove_to: betaRef, text: ["BETA"] },
         undefined,
         undefined,
         ctx,
       );
-      await expect(
-        editTool.execute(
-          "e2-stale",
-          { remove_from: betaRef, remove_to: betaRef, replacement_lines: ["BETA-AGAIN"] },
-          undefined,
-          undefined,
-          ctx,
-        ),
-      ).rejects.toThrow(/E_STALE_ANCHOR.*not owned in this session/);
+      expect(await toolError(() => editTool.execute(
+        "e2-stale",
+        { remove_from: betaRef, remove_to: betaRef, text: ["BETA-AGAIN"] },
+        undefined,
+        undefined,
+        ctx,
+      ))).toMatch(/E_STALE_ANCHOR.*not owned in this session/);
 
       const alphaEdit = await editTool.execute(
         "e3",
-        { remove_from: alphaRef, remove_to: alphaRef, replacement_lines: ["ALPHA"] },
+        { remove_from: alphaRef, remove_to: alphaRef, text: ["ALPHA"] },
         undefined,
         undefined,
         ctx,
@@ -157,7 +155,7 @@ describe("chained edit anchors", () => {
 
       const editResult = await editTool.execute(
         "e1",
-        { remove_from: gammaRef, remove_to: betaRef, replacement_lines: ["X"] },
+        { remove_from: gammaRef, remove_to: betaRef, text: ["X"] },
         undefined,
         undefined,
         ctx,
@@ -167,7 +165,7 @@ describe("chained edit anchors", () => {
 
       const alphaEdit = await editTool.execute(
         "e2",
-        { remove_from: alphaRef, remove_to: alphaRef, replacement_lines: ["ALPHA"] },
+        { remove_from: alphaRef, remove_to: alphaRef, text: ["ALPHA"] },
         undefined,
         undefined,
         ctx,

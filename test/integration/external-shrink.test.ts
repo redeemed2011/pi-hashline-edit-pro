@@ -5,6 +5,7 @@ import {
   setupIntegrationTest,
   getText,
   extractHash,
+  toolError,
 } from "../support/fixtures";
 
 describe("served state across an external shrink", () => {
@@ -26,7 +27,7 @@ describe("served state across an external shrink", () => {
         {
           remove_from: dHash,
           remove_to: eHash,
-          replacement_lines: [],
+          text: [],
         },
         undefined,
         undefined,
@@ -48,19 +49,17 @@ describe("served state across an external shrink", () => {
 
       await writeFile(path, "b\nd\ne\nb\nf\n", "utf-8");
 
-      await expect(
-        editTool.execute(
-          "e1",
-          {
-            remove_from: aHash,
-            remove_to: aHash,
-            replacement_lines: ["x"],
-          },
-          undefined,
-          undefined,
-          ctx,
-        ),
-      ).rejects.toThrow(/E_STALE_ANCHOR/);
+      expect(await toolError(() => editTool.execute(
+        "e1",
+        {
+          remove_from: aHash,
+          remove_to: aHash,
+          text: ["x"],
+        },
+        undefined,
+        undefined,
+        ctx,
+      ))).toMatch(/E_STALE_ANCHOR/);
       expect(await readFile(path, "utf-8")).toBe("b\nd\ne\nb\nf\n");
     });
   });

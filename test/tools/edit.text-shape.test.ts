@@ -15,7 +15,7 @@ describe("edit tool text shape (token budget)", () => {
       const result = await editTool.execute(
         "e1",
         {
-          remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: ["BBB"],
+          remove_from: hashes[1]!, remove_to: hashes[1]!, text: ["BBB"],
         },
         undefined,
         undefined,
@@ -36,7 +36,7 @@ describe("edit tool text shape (token budget)", () => {
       const result = await editTool.execute(
         "e1",
         {
-          remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: ["BBB"],
+          remove_from: hashes[1]!, remove_to: hashes[1]!, text: ["BBB"],
         },
         undefined,
         undefined,
@@ -47,22 +47,21 @@ describe("edit tool text shape (token budget)", () => {
     });
   });
 
-  it("changed mode rejects deleting all content from a non-empty file", async () => {
+  it("changed mode empties a file when all content is deleted", async () => {
     await withTempFile("sample.ts", "only\n", async ({ cwd }) => {
       const { ctx, editTool } = setupIntegrationTest(cwd);
       const hashes = await lineHashes("only\n", join(cwd, "sample.ts"));
 
-      await expect(
-        editTool.execute(
-          "e1",
-          {
-            remove_from: hashes[0]!, remove_to: hashes[0]!, replacement_lines: [],
-          },
-          undefined,
-          undefined,
-          ctx,
-        ),
-      ).rejects.toThrow(/E_WOULD_EMPTY/);
+      const result = await editTool.execute(
+        "e1",
+        {
+          remove_from: hashes[0]!, remove_to: hashes[0]!, text: [],
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+      expect(result.content[0].text).toContain("File is empty");
     });
   });
 
@@ -75,7 +74,7 @@ describe("edit tool text shape (token budget)", () => {
       const result = await editTool.execute(
         "e1",
         {
-          remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: [`b${longLine.slice(1)}`],
+          remove_from: hashes[1]!, remove_to: hashes[1]!, text: [`b${longLine.slice(1)}`],
         },
         undefined,
         undefined,
@@ -86,7 +85,7 @@ describe("edit tool text shape (token budget)", () => {
     });
   });
 
-  it("splits a replacement_lines element with embedded newlines", async () => {
+  it("splits a text element with embedded newlines", async () => {
     await withTempFile("sample.ts", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { ctx, editTool } = setupIntegrationTest(cwd);
       const hashes = await lineHashes("aaa\nbbb\nccc\n", path);
@@ -94,7 +93,7 @@ describe("edit tool text shape (token budget)", () => {
       const result = await editTool.execute(
         "e1",
         {
-          remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: ["BBB\nCCC"],
+          remove_from: hashes[1]!, remove_to: hashes[1]!, text: ["BBB\nCCC"],
         },
         undefined,
         undefined,

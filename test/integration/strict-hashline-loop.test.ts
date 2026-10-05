@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { withTempFile, setupIntegrationTest } from "../support/fixtures";
+import { withTempFile, setupIntegrationTest, toolError } from "../support/fixtures";
 
 describe("strict hashline tool loop", () => {
   it("supports read -> fresh edit -> stale rejection -> retry with fresh anchor", async () => {
@@ -16,24 +16,22 @@ describe("strict hashline tool loop", () => {
       await editTool.execute(
         "e1",
         {
-          remove_from: betaRef, remove_to: betaRef, replacement_lines: ["BETA"],
+          remove_from: betaRef, remove_to: betaRef, text: ["BETA"],
         },
         undefined,
         undefined,
         ctx,
       );
 
-      await expect(
-        editTool.execute(
-          "e2",
-          {
-            remove_from: betaRef, remove_to: betaRef, replacement_lines: ["BETA-AGAIN"],
-          },
-          undefined,
-          undefined,
-          ctx,
-        ),
-      ).rejects.toThrow(/E_STALE_ANCHOR.*not owned in this session/);
+      expect(await toolError(() => editTool.execute(
+        "e2",
+        {
+          remove_from: betaRef, remove_to: betaRef, text: ["BETA-AGAIN"],
+        },
+        undefined,
+        undefined,
+        ctx,
+      ))).toMatch(/E_STALE_ANCHOR.*not owned in this session/);
 
       const secondRead = await readTool.execute("r2", { path: "sample.ts" }, undefined, undefined, ctx);
       const secondText = secondRead.content[0].text as string;
@@ -45,7 +43,7 @@ describe("strict hashline tool loop", () => {
       await editTool.execute(
         "e3",
         {
-          remove_from: freshRef, remove_to: freshRef, replacement_lines: ["BETA-AGAIN"],
+          remove_from: freshRef, remove_to: freshRef, text: ["BETA-AGAIN"],
         },
         undefined,
         undefined,
@@ -64,7 +62,7 @@ describe("strict hashline tool loop", () => {
 
       await editTool.execute(
         "e1",
-        { remove_from: emptyHash, remove_to: emptyHash, replacement_lines: ["first", "second"] },
+        { remove_from: emptyHash, remove_to: emptyHash, text: ["first", "second"] },
         undefined,
         undefined,
         ctx,
@@ -89,7 +87,7 @@ describe("CRLF line ending preservation", () => {
 
       await editTool.execute(
         "e1",
-        { remove_from: betaRef, remove_to: betaRef, replacement_lines: ["BETA"] },
+        { remove_from: betaRef, remove_to: betaRef, text: ["BETA"] },
         undefined,
         undefined,
         ctx,
@@ -115,7 +113,7 @@ describe("CRLF line ending preservation", () => {
 
       await editTool.execute(
         "e1",
-        { remove_from: betaRef, remove_to: betaRef, replacement_lines: ["BETA"] },
+        { remove_from: betaRef, remove_to: betaRef, text: ["BETA"] },
         undefined,
         undefined,
         ctx,
@@ -146,7 +144,7 @@ describe("UTF-8 BOM handling", () => {
 
       await editTool.execute(
         "e1",
-        { remove_from: betaRef, remove_to: betaRef, replacement_lines: ["BETA"] },
+        { remove_from: betaRef, remove_to: betaRef, text: ["BETA"] },
         undefined,
         undefined,
         ctx,

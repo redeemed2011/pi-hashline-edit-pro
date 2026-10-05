@@ -1,0 +1,1 @@
+- `replace_match`: `old_string` is usually a fragment of the line, not the whole line; every occurrence inside the range is replaced, so scope the range with anchors when only some occurrences should change.
