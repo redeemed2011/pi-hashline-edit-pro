@@ -10,7 +10,7 @@ import {
 } from "./replace-diff";
 import { readNormFile, type NormFile } from "./file-reader";
 import { editToolSchema, buildEditToolSchema, type ReqParams, type RawReqParams, assertReq, normReq } from "./payload-contract";
-import { literalEscapeHints, splitLines } from "./utils";
+import { coerceArrayShapedPayload, literalEscapeHints, splitLines } from "./utils";
 import { loadP, loadGuide } from "./prompts";
 import { type FileIdentity } from "./fs-write";
 import { applyEdit,
@@ -290,6 +290,10 @@ export function buildToolDef(flags: EditToolFlags = DEFAULT_EDIT_FLAGS): ToolDef
         const canonical = normReq(params);
         assertReq(canonical);
         const normalizedParams = canonical;
+        normalizedParams.replacement_lines = coerceArrayShapedPayload(
+          normalizedParams.replacement_lines,
+          "replacement_lines",
+        );
         const literalEscapes = literalEscapeHints([normalizedParams.replacement_lines], "replacement_lines");
         const targetPath = await resolveEditTargetWithRequirement({
           removeFrom: normalizedParams.remove_from,

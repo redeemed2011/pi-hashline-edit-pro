@@ -188,7 +188,7 @@ Edge cases:
 | --- | --- |
 | `remove_from` | 4-char anchor marking the FIRST line to remove (inclusive). |
 | `remove_to` | 4-char anchor marking the LAST line to remove (inclusive). |
-| `replacement_lines` | The exact text to write in place of the removed range, as one string: `""` deletes the range, `"\n"` is one blank line, and a trailing line break sets the last line's ending instead of adding a blank line. Embedded `\r\n`/`\r`/`\n` are preserved; JSON decoding happens once, before the tool; the tool writes the string it receives and never decodes — `\uXXXX` is the character, `\\uXXXX` the literal text. Legacy arrays are converted to text (elements joined with LF); prefer the string form. |
+| `replacement_lines` | The exact text to write in place of the removed range, as one string: `""` deletes the range, `"\n"` is one blank line, and a trailing line break sets the last line's ending instead of adding a blank line. Embedded `\r\n`/`\r`/`\n` are preserved; JSON decoding happens once, before the tool; the tool writes the string it receives and never decodes — `\uXXXX` is the character, `\\uXXXX` the literal text. Legacy arrays are converted to text (elements joined with LF); prefer the string form. A string that looks like a JSON array is expanded to its text; if it looks like one but cannot be parsed, the edit is refused with `[E_BAD_SHAPE]` and the file is left unchanged. |
 
 Example: read showed `Hasu│old` and `arvm│old2`; to replace both:
 
@@ -205,7 +205,7 @@ A deletion keeps blank lines at the edges of the removed range, so the separator
 
 The extension checks the request before any file I/O, so a bad request never touches the file.
 
-Auto-fixable slips fall into two groups. Fixed silently: a reversed range, embedded newlines, and a legacy array payload (a single-element array that holds stringified array text, even with a trailing JS method call, for example `[…].map(s => s)`, is unwrapped). Fixed with a warning: a leftover `anchor│` prefix in `replacement_lines` or the anchor fields (a prefix of 4 to 5 letters before `│`, for example `abde│`), and diff-preview rows pasted into the replacement.
+Auto-fixable slips fall into two groups. Fixed silently: a reversed range, embedded newlines, and a legacy array payload (a single-element array that holds stringified array text, even with a trailing JS method call, for example `[…].map(s => s)`, is unwrapped). A string with that same shape is expanded the same way; one that looks like a JSON array but cannot be parsed is refused with `[E_BAD_SHAPE]` and the file is left unchanged. Fixed with a warning: a leftover `anchor│` prefix in `replacement_lines` or the anchor fields (a prefix of 4 to 5 letters before `│`, for example `abde│`), and diff-preview rows pasted into the replacement.
 
 Content containing a NUL byte (`U+0000`) is rejected with `[E_BAD_SHAPE]` before any file I/O: writing it would make the file binary, so use an empty replacement to delete. This applies to `replace`'s `replacement_lines` and `insert`'s `lines`.
 
@@ -231,7 +231,7 @@ A `replace_within` call is never grouped into a batch; it commits on its own lik
 | --- | --- |
 | `anchor` | 4-char anchor marking the line next to which the lines go. The anchor line is preserved. A pasted `+Hasu│x` diff row or `anchor│` prefix is stripped automatically with a warning. |
 | `direction` | `"after"` inserts below the anchor line, `"before"` above it. |
-| `lines` | The exact text to insert, as one string: `""` inserts one blank line (the same as `"\n"`), and a trailing line break sets the last line's ending instead of adding a blank line. Never include the anchor line. Embedded `\r\n`/`\r`/`\n` are preserved; JSON decoding happens once, before the tool; the tool writes the string it receives and never decodes — `\uXXXX` is the character, `\\uXXXX` the literal text. Legacy arrays are converted to text (elements joined with LF); prefer the string form. |
+| `lines` | The exact text to insert, as one string: `""` inserts one blank line (the same as `"\n"`), and a trailing line break sets the last line's ending instead of adding a blank line. Never include the anchor line. Embedded `\r\n`/`\r`/`\n` are preserved; JSON decoding happens once, before the tool; the tool writes the string it receives and never decodes — `\uXXXX` is the character, `\\uXXXX` the literal text. Legacy arrays are converted to text (elements joined with LF); prefer the string form. A string that looks like a JSON array is expanded to its text; if it looks like one but cannot be parsed, the edit is refused with `[E_BAD_SHAPE]` and the file is left unchanged. |
 
 Nothing is removed and the inserted lines are written exactly as given; the anchor line and every other line stay in place. An empty `lines` payload inserts one blank line. To seed an empty file, read it and insert after the `anchor│` empty-line row.
 
@@ -431,8 +431,8 @@ Full reference:
 | Code | Meaning |
 | --- | --- |
 | `[E_CONFIG]` | `PI_HASHLINE_DIR` is nonempty but not an absolute path. |
-| `[E_BAD_SHAPE]` | Request envelope or edit item has unknown, missing, or wrongly-typed fields (for example `replacement_lines` must be a string holding the exact text), content contains a NUL byte (`U+0000`), which would make the file binary, or a grep `glob` has invalid bracket or brace syntax. |
-| `[W_BAD_SHAPE]` | Auto-corrected request slip reported as a warning (for example legacy array text that could not be parsed and was kept as one literal line). |
+| `[E_BAD_SHAPE]` | Request envelope or edit item has unknown, missing, or wrongly-typed fields (for example `replacement_lines` must be a string holding the exact text), content contains a NUL byte (`U+0000`), which would make the file binary, or a grep `glob` has invalid bracket or brace syntax. A `replacement_lines` or `lines` value that looks like a JSON array but cannot be parsed is refused and the file is left unchanged; a parseable one is expanded to its text. |
+| `[W_BAD_SHAPE]` | Auto-corrected request slip reported as a warning (the array decoder still reports array-shaped text it cannot parse; `replace` and `insert` refuse that payload with `[E_BAD_SHAPE]` instead of writing it). |
 | `[E_BAD_REF]` | An anchor in `remove_from`/`remove_to` is not a bare 4-character anchor (the anchor table is letters only). |
 | `[E_SUBSTRING_NOT_FOUND]` | `replace_within` did not find `replace_old` in the selected range. The current `anchor│content` rows are returned; copy `replace_old` exactly from the served row and retry. |
 | `[E_SUBSTRING_AMBIGUOUS]` | `replace_within` found `replace_old` more than once in the selected range. Narrow `replace_from`/`replace_to` or extend `replace_old` so it matches exactly once. |

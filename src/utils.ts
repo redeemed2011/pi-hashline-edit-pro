@@ -368,6 +368,17 @@ function legacyLinesToText(lines: string[]): string {
 	return text;
 }
 
+export function coerceArrayShapedPayload(text: string, label: string): string {
+	if (!looksLikeStringArray(text)) return text;
+	const decoded = decodeArrayText(text);
+	if (decoded === undefined) {
+		throw new Error(
+			`[E_BAD_SHAPE] ${label} looked like a JSON array but could not be parsed; the edit was refused: ${clipLine(text, 60)}`,
+		);
+	}
+	return legacyLinesToText(decoded);
+}
+
 function normalizeEditLines(record: Record<string, unknown>): void {
 	for (const key of ["replacement_lines", "lines"]) {
 		const value = record[key];

@@ -388,14 +388,14 @@ describe("regReplace", () => {
     });
   });
 
-  it("writes unparseable string-array text literally", async () => {
+  it("refuses unparseable string-array text and leaves the file unchanged", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { pi, getTool } = makeFakePiRegistry();
       regReplace(pi);
       const tool = getTool("replace");
       const hashes = await lineHashes("aaa\nbbb\nccc\n", path);
 
-      const result = await tool.execute(
+      await expect(tool.execute(
         "e1",
         {
           remove_from: hashes[1]!, remove_to: hashes[1]!,
@@ -404,14 +404,13 @@ describe("regReplace", () => {
         undefined,
         undefined,
         { cwd } as any,
-      );
+      )).rejects.toThrow(/\[E_BAD_SHAPE\]/);
 
-      expect(result.content[0].text).not.toContain("looked like a JSON array");
-      expect(await readFile(path, "utf-8")).toBe('aaa\n["B1", 7]\nccc\n');
+      expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
     });
   });
 
-  it("writes unparseable string-array text literally in strict-input mode", async () => {
+  it("refuses unparseable string-array text in strict-input mode and leaves the file unchanged", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       await mkdir(join(cwd, ".config", "pi-hashline-edit-pro"), { recursive: true });
       await writeFile(
@@ -424,7 +423,7 @@ describe("regReplace", () => {
       const tool = getTool("replace");
       const hashes = await lineHashes("aaa\nbbb\nccc\n", path);
 
-      const result = await tool.execute(
+      await expect(tool.execute(
         "e1",
         {
           remove_from: hashes[1]!, remove_to: hashes[1]!,
@@ -433,9 +432,9 @@ describe("regReplace", () => {
         undefined,
         undefined,
         { cwd } as any,
-      );
-      expect(result.content[0].text).toContain("Successfully replaced in sample.txt");
-      expect(await readFile(path, "utf-8")).toBe('aaa\n["B1", 7]\nccc\n');
+      )).rejects.toThrow(/\[E_BAD_SHAPE\]/);
+
+      expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
     });
   });
 
@@ -514,7 +513,26 @@ describe("regReplace - stringified replacement_lines payloads", () => {
     });
   });
 
-  it("keeps a malformed stringified array literal", async () => {
+  it("refuses a malformed stringified array and leaves the file unchanged", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      regReplace(pi);
+      const tool = getTool("replace");
+      const hashes = await lineHashes("aaa\nbbb\nccc\n", join(cwd, "sample.txt"));
+
+      await expect(tool.execute(
+        "e1",
+        { remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: [glmMalformedPayload] },
+        undefined,
+        undefined,
+        { cwd } as any,
+      )).rejects.toThrow(/\[E_BAD_SHAPE\]/);
+
+      expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
+    });
+  });
+
+  it("decodes a JSON-array string instead of writing the wrapper", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { pi, getTool } = makeFakePiRegistry();
       regReplace(pi);
@@ -523,14 +541,19 @@ describe("regReplace - stringified replacement_lines payloads", () => {
 
       const result = await tool.execute(
         "e1",
-        { remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: [glmMalformedPayload] },
+        {
+          remove_from: hashes[1]!,
+          remove_to: hashes[1]!,
+          replacement_lines: '["      \\"threshold\\": 85,"]',
+        },
         undefined,
         undefined,
         { cwd } as any,
       );
 
-      expect(result.content[0].text).not.toContain("[W_BAD_SHAPE]");
-      expect(await readFile(path, "utf-8")).toBe('aaa\n["    \\"pi-hashline-edit-pro\\": \\"^4.3.5\\",""]\nccc\n');
+      expect(result.content[0].text).toContain("Successfully replaced in sample.txt");
+      expect(result.content[0].text).not.toContain("[H_LITERAL_ESCAPE]");
+      expect(await readFile(path, "utf-8")).toBe('aaa\n      "threshold": 85,\nccc\n');
     });
   });
 });

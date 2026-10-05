@@ -11,7 +11,7 @@ import { stripAnchorRow } from "./hashline/resolve";
 import { withAnchorSession } from "./anchor-registry";
 import { loadP, loadGuide } from "./prompts";
 import { assertInsertReq, normReq, type InsertReq } from "./payload-contract";
-import { isRec, literalEscapeHints, splitLines } from "./utils";
+import { coerceArrayShapedPayload, isRec, literalEscapeHints, splitLines } from "./utils";
 import { queuedEdit, editToolBase, editRenderCallWrapper, editRenderResultWrapper, resolveEditTargetWithRequirement, throwIfStrictInput, withInsertPrompts, DEFAULT_EDIT_FLAGS, type EditToolFlags } from "./edit-common";
 import type { RPreview, RRState } from "./replace-render";
 export { assertInsertReq, type InsertReq };
@@ -70,7 +70,7 @@ export function buildInsertEdit(
   ref: Anchor,
   path: string,
 ): { editParams: HTEdit; anchorLine: string | undefined; contentSeparators: (LineEnding | undefined)[] } {
-  const parsed = parsePayloadText(req.lines.length === 0 ? "\n" : req.lines);
+  const parsed = parsePayloadText(coerceArrayShapedPayload(req.lines.length === 0 ? "\n" : req.lines, "lines"));
   const fileLines = splitLines(preload.normalized);
   const line = resolveAnchorLine(ref, fileLines, preload.fileHashes, path);
   const anchorLine = preload.normalized.length === 0 ? undefined : fileLines[line - 1];
@@ -177,6 +177,7 @@ export function buildInsertToolDef(flags: EditToolFlags = DEFAULT_EDIT_FLAGS): I
         const canonical = normReq(params);
         assertInsertReq(canonical);
         const req = canonical;
+        req.lines = coerceArrayShapedPayload(req.lines, "lines");
         const insertWarnings: string[] = [...literalEscapeHints([req.lines], "lines")];
         const targetPath = await resolveEditTargetWithRequirement({
           anchor: req.anchor,

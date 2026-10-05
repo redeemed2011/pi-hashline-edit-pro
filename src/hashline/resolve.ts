@@ -1,4 +1,4 @@
-import { abortIf, rejectUnknownFields, clipLine, decodeStringArray, assertNoNul } from "../utils";
+import { abortIf, rejectUnknownFields, clipLine, coerceArrayShapedPayload, decodeStringArray, assertNoNul } from "../utils";
 import { parseHashRef, parsePayloadText, parseTextWithSeparators, type Anchor, type ParsedText } from "./parse";
 import { HASH_SEP, stripRowPrefix, lineChecksum, type RowPrefixKind } from "./hash";
 import { HASH_RUN } from "./alphabet";
@@ -197,9 +197,14 @@ export function stripAnchorRow(
 export function resEdit(edit: HTEdit | HTPayloadEdit, warnings?: string[]): HEdit {
 	if (typeof edit.replacement_lines === "string") {
 		assertPayloadItem(edit as unknown as Record<string, unknown>);
-		return resolveParsedEdit(edit.remove_from, edit.remove_to, parsePayloadText(edit.replacement_lines), warnings);
+		const text = coerceArrayShapedPayload(edit.replacement_lines, "replacement_lines");
+		return resolveParsedEdit(edit.remove_from, edit.remove_to, parsePayloadText(text), warnings);
 	}
 	assertItem(edit as Record<string, unknown>);
+	const rawLines = edit.replacement_lines;
+	if (Array.isArray(rawLines) && rawLines.length === 1 && typeof rawLines[0] === "string") {
+		coerceArrayShapedPayload(rawLines[0], "replacement_lines");
+	}
 	const parsed = parseTextWithSeparators(decodeStringArray(edit.replacement_lines, warnings) ?? edit.replacement_lines);
 	return resolveParsedEdit(edit.remove_from, edit.remove_to, parsed, warnings);
 }

@@ -3,6 +3,7 @@ import {
 	resEdit,
 	type Anchor,
 	type HTEdit,
+	type HTPayloadEdit,
 } from "../../src/hashline";
 
 describe("resEdit", () => {
@@ -82,15 +83,29 @@ describe("resEdit", () => {
     expect(warnings).toEqual([]);
   });
 
-  it("warns but keeps unparseable string-array text as one literal line", () => {
-    const warnings: string[] = [];
+  it("refuses unparseable string-array text instead of writing it", () => {
     const edit = {
       remove_from: "wpDM", remove_to: "wpDM",
       replacement_lines: ['["a", 7]'],
     } as unknown as HTEdit;
-    const resolved = resEdit(edit, warnings);
-    expect(resolved.content_lines).toEqual(['["a", 7]']);
-    expect(warnings[0]).toContain("looked like a JSON array but could not be parsed");
+    expect(() => resEdit(edit)).toThrow(/\[E_BAD_SHAPE\][\s\S]*could not be parsed/);
+  });
+
+  it("decodes a JSON-array string instead of writing the wrapper", () => {
+    const edit = {
+      remove_from: "wpDM", remove_to: "wpDM",
+      replacement_lines: '["      \\"threshold\\": 85,"]',
+    } as unknown as HTPayloadEdit;
+    const resolved = resEdit(edit);
+    expect(resolved.content_lines).toEqual(['      "threshold": 85,']);
+  });
+
+  it("refuses an unparseable JSON-array string", () => {
+    const edit = {
+      remove_from: "wpDM", remove_to: "wpDM",
+      replacement_lines: '["a", 7]',
+    } as unknown as HTPayloadEdit;
+    expect(() => resEdit(edit)).toThrow(/\[E_BAD_SHAPE\]/);
   });
 
 	it("rejects null replacement_lines input", () => {
