@@ -159,13 +159,13 @@ The extension registers eight tools: `read`, `replace`, `replace_match`, `insert
 
 ### read
 
-`read` returns a text file with every line prefixed by `anchor│content`. The anchor is the line's address.
+`read` returns a text file with every line prefixed by `anchor│content`. The anchor is the line's address. `offset` accepts a 1-indexed line number or a served anchor; with an anchor, `limit` counts the lines to return after it. Anchor offsets are stable across edits and return the same editable rows.
 
 | Parameter | Description |
 | --- | --- |
 | `path` | Path to the file (relative or absolute). |
-| `offset` | Line number to start reading from (1-indexed). |
-| `limit` | Maximum number of lines to return. |
+| `offset` | Line number (1-indexed) or a served anchor to start reading from. |
+| `limit` | Maximum number of lines to return from `offset`. |
 
 Output is capped at 2000 lines and 50KB. Paged output ends with a continuation hint, for example `[Showing lines 1-50 of 120. Use offset=51 to continue.]`.
 
@@ -189,6 +189,8 @@ Edge cases:
 | `remove_from` | 4-char anchor marking the FIRST line to remove (inclusive). |
 | `remove_to` | 4-char anchor marking the LAST line to remove (inclusive). |
 | `text` | The exact text to write in place of the removed range, as one string: `""` deletes the range, `"\n"` is one blank line, and a trailing line break sets the last line's ending instead of adding a blank line. Embedded `\r\n`/`\r`/`\n` are preserved; JSON decoding happens once, before the tool; the tool writes the string it receives and never decodes — `\uXXXX` is the character, `\\uXXXX` the literal text. Legacy arrays are converted to text (elements joined with LF); prefer the string form. A string that looks like a JSON array is expanded to its text; if it looks like one but cannot be parsed, the edit is refused with `[E_BAD_SHAPE]` and the file is left unchanged. |
+
+`replace_from` and `replace_to` are accepted as aliases for `remove_from` and `remove_to`.
 
 Example: read showed `Hasu│old` and `arvm│old2`; to replace both:
 
@@ -218,6 +220,8 @@ After a successful edit, the diff is capped at 50KB. A row over 50KB is shown as
 ### replace_match
 
 `replace_match` changes part of a line (or a range of lines) without retyping the rest. `replace_from` and `replace_to` are bare anchors marking the first and last line of the range; use the same anchor for a single line. `old_string` is the exact text to find inside that range, and `new_string` replaces every occurrence of it; every other character stays untouched. That makes it the tool for a change the request quotes as a substring: a whole-line `replace` has to reproduce the rest of the line, so a slipped character becomes a wrong byte, while `replace_match` leaves everything the request did not name untouched. It is enabled by default; turn Replace match off in `/hashline-config` to remove the tool.
+
+`remove_from` and `remove_to` are accepted as aliases for `replace_from` and `replace_to`.
 
 `old_string` is matched against the range's text (LF line breaks, no final terminator) and every non-overlapping occurrence is replaced, left to right. A missing match is refused with `[E_SUBSTRING_NOT_FOUND]` and the current `anchor│content` rows, so the retry needs no `read`. The two boundary anchors are verified against what was last shown; lines strictly inside the range are matched against the file as it currently stands on disk.
 
@@ -332,21 +336,21 @@ Auto-read keeps the same 50KB and 2000-line budget as `read`. Auto-read and Diff
 
 ## Auto-read all
 
-Auto-read all is off by default and has three modes, selected in `/hashline-config`: `off` injects nothing, `on` discovers every file in the working directory that is not git-ignored (`git ls-files`, falling back to `ripgrep`, then to a directory walk), and `git` uses `git ls-files` only, injecting nothing when the working directory is not a git repository. On the first turn of a session, the extension discovers the files, reads each one, and attaches the resulting `anchor│content` rows to the conversation as one extension message before the model answers. Those anchors are served exactly like `read` output, so the model can `replace` and `insert` immediately without calling `read` first. The message is injected once per session; resumed, forked, and cloned sessions that already contain it skip the injection.
+Auto-read all is off by default and has three modes, selected in `/hashline-config`: `off` injects nothing; `outline` attaches an anchor-stamped structural outline per file; and `full` discovers every file in the working directory that is not git-ignored (`git ls-files`, falling back to `ripgrep`, then to a directory walk) and attaches full contents. `Git repos only` is on by default and keeps the whole injection inside a git repository; turn it off to attach files in any directory. On the first turn of a session, the extension discovers the files, reads each one, and attaches the resulting `anchor│content` rows to the conversation as one extension message before the model answers. Those anchors are served exactly like `read` output, so the model can `replace` and `insert` immediately without calling `read` first. The message is injected once per session; resumed, forked, and cloned sessions that already contain it skip the injection.
 
-Files are filtered before injection: symlinks, directories, image extensions (including SVG), binary files (a NUL byte in the first 8KB), files over 200KB, any path with a vendored segment (vendor, node_modules, bower_components, third_party, thirdparty, jspm_packages, .venv, venv, site-packages, __pycache__, .tox, .gradle, .terraform, Pods, Carthage, DerivedData, coreui, coreui-icons, case-insensitive), and vendored or generated names and patterns (*.min.js, *.min.css, *.min.mjs, *-min.js, *-min.css, *.bundle.*, *.chunk.*, *.umd.js, *.map, *.lock, package-lock.json, yarn.lock, composer.lock, Gemfile.lock, Cargo.lock, poetry.lock, Pipfile.lock, go.sum, flake.lock, *.generated.*, *.gen.*, *_pb2.py, *.pb.go, *.g.dart, *.freezed.dart, *.designer.cs, *.g.cs, *.snap, .eslintcache, coreui-icons.*, coreui.css) are skipped. The attachment stops at 500 files or at a byte budget derived from the model context window (200KB floor, 2MB ceiling), and it never drops below one file. Skipped and not-attached files are named at the end of the message so the model can `read` them on demand. A model matched by `disableOnModels` skips the injection entirely.
+Files are filtered before injection: symlinks, directories, image extensions (including SVG), binary files (a NUL byte in the first 8KB), files over 200KB, any path with a vendored segment (vendor, node_modules, bower_components, third_party, thirdparty, jspm_packages, .venv, venv, site-packages, __pycache__, .tox, .gradle, .terraform, Pods, Carthage, DerivedData, coreui, coreui-icons, case-insensitive; `resources/views/vendor` is kept so Laravel view overrides stay attached), and vendored or generated names and patterns (*.min.js, *.min.css, *.min.mjs, *-min.js, *-min.css, *.bundle.*, *.chunk.*, *.umd.js, *.map, *.lock, package-lock.json, yarn.lock, composer.lock, Gemfile.lock, Cargo.lock, poetry.lock, Pipfile.lock, go.sum, flake.lock, *.generated.*, *.gen.*, *_pb2.py, *.pb.go, *.g.dart, *.freezed.dart, *.designer.cs, *.g.cs, *.snap, _ide_helper.php, _ide_helper_models.php, .phpstorm.meta.php, .eslintcache, coreui-icons.*, coreui.css) are skipped. The attachment stops at 500 files or at a byte budget derived from the model context window (200KB floor, 2MB ceiling), and it never drops below one file. Skipped and not-attached files are named at the end of the message so the model can `read` them on demand. A model matched by `disableOnModels` skips the injection entirely.
 
-Each attached file is shown as `=== path ===` followed by its `anchor│content` rows. Edit directly from the attachment with replace and insert, so no `read` is needed. Files attach whole.
+Each attached file starts with a header (`=== path ===` in `full` mode, `=== path (language) — lines ===` in `outline` mode) followed by its anchor rows. Edit directly from the attachment with replace and insert, so no `read` is needed. `full` attaches files whole; `outline` attaches each file's structural outline within the budget.
 
-A coverage line after the header reports the complete count. A `[files complete: [...] omitted: [...]]` line right after it lists every attached complete file and omitted file in one place. Check that line instead of scanning sections.
+A coverage line after the header reports how many attached files were served in full; a section truncated by the per-file budget is not counted as complete. Each attached file begins with a `=== path ===` header, and files that were not attached are named in the footer.
 
-The setting lives in `/hashline-config` as Auto-read all and in `config.json` as `autoReadAll` (`"off"`, `"on"`, or `"git"`; older configs with `true` or `false` are read as `"on"` or `"off"`). Extra folders and files are ignored via `/hashline-config` as Ignore folders/files and via `config.json` as `autoReadAllIgnore` (array of folder names, file names, or globs, for example `["docs", "scratch.md", "*.test.ts"]`). A single-segment entry skips any folder or file with that exact name (case-insensitive); an entry containing glob characters (`*`, `?`, `[`, `]`, `{`, `}`) is matched as a glob against the file name, or against the whole relative path when it also contains a slash, with the same syntax as `anchor_grep`'s `glob`; any other entry with a slash (for example `"src/tmp"`) skips that path. Custom ignores are counted with the vendor/name/pattern skips in the footer.
+The setting lives in `/hashline-config` as Auto-read all and in `config.json` as `autoReadAll` (`"off"`, `"outline"`, or `"full"`; older configs with `"on"` or `true` are read as `"full"`, `"git"` as `"full"`, `"outline(git)"` as `"outline"` — both with Git repos only on — and `false` as `"off"`), and as `autoReadAllRequireGit`, the Git repos only switch (on by default). Extra folders and files are ignored via `/hashline-config` as Ignore folders/files and via `config.json` as `autoReadAllIgnore` (array of folder names, file names, or globs, for example `["docs", "scratch.md", "*.test.ts"]`). A single-segment entry skips any folder or file with that exact name (case-insensitive); an entry containing glob characters (`*`, `?`, `[`, `]`, `{`, `}`) is matched as a glob against the file name, or against the whole relative path when it also contains a slash, with the same syntax as `anchor_grep`'s `glob`; any other entry with a slash (for example `"src/tmp"`) skips that path. Custom ignores are counted with the vendor/name/pattern skips in the footer.
 
 ## Configuration
 
 | Command | Description |
 | --- | --- |
-| `/hashline-config` | Open the settings window: auto-read anchors, auto-read all mode, ignore folders/files, disable on models, diff context lines, `anchor_grep` tool, copy/move tools, replace_match tool, required `path`, and strict input. Persists across sessions. |
+| `/hashline-config` | Open the settings window: auto-read anchors, auto-read all mode, git repos only, ignore folders/files, disable on models, read on disabled models, diff context lines, `anchor_grep` tool, copy/move tools, replace_match tool, required `path`, and strict input. Persists across sessions. |
 | `/clear-anchors` | Clear the session's anchor claims. Anchors are re-claimed on the next `read`. |
 
 Settings live in `~/.config/pi-hashline-edit-pro/config.json`, created when a setting is first changed in `/hashline-config`:
@@ -355,6 +359,7 @@ Settings live in `~/.config/pi-hashline-edit-pro/config.json`, created when a se
 {
   "autoRead": true,
   "autoReadAll": "off",
+  "autoReadAllRequireGit": true,
   "autoReadAllIgnore": [],
   "anchorGrepEnabled": true,
   "copyMoveEnabled": true,
@@ -362,14 +367,16 @@ Settings live in `~/.config/pi-hashline-edit-pro/config.json`, created when a se
   "requirePath": false,
   "strictInput": false,
   "diffContextLines": 1,
-  "disableOnModels": []
+  "disableOnModels": [],
+  "readOnDisabledModels": "vanilla"
 }
 ```
 
 | Key | `/hashline-config` label | Default | Effect |
 | --- | --- | --- | --- |
 | `autoRead` | Auto-read | `true` | Append the auto-read block after `write` and show post-edit diffs. |
-| `autoReadAll` | Auto-read all | `"off"` | Attachment mode: `"off"`, `"on"`, or `"git"`. |
+| `autoReadAll` | Auto-read all | `"off"` | Attachment mode: `"off"`, `"outline"` (anchor-stamped per-file outlines), or `"full"` (full contents). Legacy `"git"`/`"outline(git)"` read as `"full"`/`"outline"` with Git repos only on; `"on"`/`true` read as `"full"`. |
+| `autoReadAllRequireGit` | Git repos only | `true` | Run the injection only when the working directory is inside a git repository; when off, auto-read all also attaches files discovered by `ripgrep` or the directory walk. |
 | `autoReadAllIgnore` | Ignore folders/files | `[]` | Extra folder names, file names, or globs skipped by auto-read all. |
 | `anchorGrepEnabled` | Anchor grep | `true` | Register `anchor_grep` and disable the built-in grep while it is on. |
 | `copyMoveEnabled` | Copy/move | `true` | Offer the `copy` and `move` tools; when off, both are removed from the active tools. |
@@ -377,9 +384,10 @@ Settings live in `~/.config/pi-hashline-edit-pro/config.json`, created when a se
 | `requirePath` | Require path | `false` | `replace`, `replace_match`, `insert`, `copy`, and `move` require a `path` argument that must match anchor ownership. |
 | `strictInput` | Strict input | `false` | Reject auto-fixable slips (`[W_BAD_SHAPE]`, `[W_BAD_REF]`, `[W_INVALID_PATCH]`, `[W_BARE_HASH_PREFIX]`) with `[E_BAD_SHAPE]` instead of applying them with a warning. |
 | `diffContextLines` | Diff context | `1` | Surrounding lines in post-edit diffs, 0-10 (needs Auto-read). |
-| `disableOnModels` | Disable on models | `[]` | Model globs matched case-insensitively against `provider/id`, the bare `id`, and `api`, with `*` and `?` wildcards. A matching model gets no hashline tools, no auto-read, and no write-echo refusal. |
+| `disableOnModels` | Disable on models | `[]` | Model globs matched case-insensitively against `provider/id`, the bare `id`, and `api`, with `*` and `?` wildcards. A matching model gets no anchored edit tools, no auto-read, and no write-echo refusal; `read` stays available as pi's ordinary read unless Read on disabled models is `remove`. |
+| `readOnDisabledModels` | Read on disabled models | `"vanilla"` | `read` for a model matched by `disableOnModels`: `"vanilla"` keeps pi's ordinary `read` active while the anchored edit tools stay off; `"remove"` disables `read` with the rest of the anchored tools. |
 
-`disableOnModels` turns off the whole anchored surface for the models you name, so another edit tool (`apply_patch`, a shell read) can own the session without competing instructions. A match removes `read`, `replace`, `replace_match`, `insert`, `copy`, `move`, `anchor_grep`, and `undo_last_change` from the active tools, restoring the built-in `grep` when it was active, and it also skips the auto-read-all injection, the auto-read block after `write`, the post-edit diff substitution, and the `write` hook that refuses a `write` echoing a served anchor. The list is checked on `session_start`, on `model_select`, and again on `before_agent_start`, so a model change inside a session switches the surface immediately and another extension cannot re-add the tools mid-session. The default `[]` leaves every model unchanged.
+`disableOnModels` turns off the whole anchored surface for the models you name, so another edit tool (`apply_patch`, a shell read) can own the session without competing instructions. A match removes `replace`, `replace_match`, `insert`, `copy`, `move`, `anchor_grep`, and `undo_last_change` from the active tools, and also `read` when Read on disabled models is `remove`, restoring the built-in `grep` when it was active, and it also skips the auto-read-all injection, the auto-read block after `write`, the post-edit diff substitution, and the `write` hook that refuses a `write` echoing a served anchor. Because the extension's `read` replaces the built-in one, a matched model has no `read` at all under `remove` unless another extension provides one; the default `vanilla` gives those models pi's ordinary `read` while the anchored edit tools stay off. The list is checked on `session_start`, on `model_select`, and again on `before_agent_start`, so a model change inside a session switches the surface immediately and another extension cannot re-add the tools mid-session. The default `[]` leaves every model unchanged.
 
 When `PI_HASHLINE_DIR` is unset or empty, non-Windows platforms honor `XDG_CONFIG_HOME` when set (falling back to `~/.config`); on Windows the directory always uses `~/.config`, where `~` is `%USERPROFILE%`. To move the directory explicitly, see [Isolated state](#isolated-state).
 
@@ -428,7 +436,7 @@ All eight tools also declare an `outputSchema` and return `structuredContent`, s
 
 ## Error, warning, and hint codes
 
-Codes starting with `E_` are errors: nothing was written, with one exception. `File was written; anchor finalization failed` means the file was written and one undo reverts it. Codes starting with `W_` are warnings: the call succeeded with an auto-fix notice or an anchor-reclaim notice; check `classification` (`applied` vs `noop`) in `details.metrics` to tell whether bytes changed. Codes starting with `H_` are hints: the call succeeded and the file holds exactly what was requested, so the notice is informational, never blocks an edit (not even in strict-input mode), and is reported in `details.hints` instead of `details.warnings`. `[E_AUTO_READ_ALL]` is informational rather than a failure: the `read` was refused because the file is unchanged since the start-of-session auto-read, so the attached content is still exact.
+Codes starting with `E_` are errors: nothing was written, with one exception. `File was written; anchor finalization failed` means the file was written and one undo reverts it. Codes starting with `W_` are warnings: the call succeeded with an auto-fix notice or an anchor-reclaim notice; check `classification` (`applied` vs `noop`) in `details.metrics` to tell whether bytes changed. Codes starting with `H_` are hints: the call succeeded and the file holds exactly what was requested, so the notice is informational, never blocks an edit (not even in strict-input mode), and is reported in `details.hints` instead of `details.warnings`.
 
 Most common, with the fix:
 
@@ -477,7 +485,6 @@ Full reference:
 | `[E_UNSAFE_REGEX]` | A grep regex can trigger excessive backtracking; simplify it or search with `literal: true`. |
 | `[E_GREP_FAILED]` | `anchor_grep` could not start ripgrep or ripgrep exited with an error (for example a pattern valid in JavaScript but unsupported by ripgrep's regex engine); the message carries ripgrep's output. Retry with `literal: true` or simplify the pattern. |
 | `[E_GREP_TIMEOUT]` | `anchor_grep` timed out after 10 seconds; narrow `path` or simplify `pattern` and retry. |
-| `[E_AUTO_READ_ALL]` | File already attached and unchanged since this session's start; the attached content is still exact. |
 
 ## Troubleshooting
 
@@ -563,6 +570,7 @@ Set `PI_HASHLINE_DEBUG=1` to show an "active" notification at session start.
 
 - [RimuruW](https://github.com/RimuruW), original `pi-hashline-edit` and the strict-semantics policy
 - [can1357](https://github.com/can1357), original [oh-my-pi](https://github.com/can1357/oh-my-pi) implementation and the hashline concept
+- [HanzCEO](https://github.com/HanzCEO), [pi-codebase-reader](https://github.com/HanzCEO/pi-codebase-reader): vendored tree-sitter parsers and outline extraction (Apache-2.0), exposed through the auto-read-all `outline` and `outline(git)` modes
 
 ## License
 

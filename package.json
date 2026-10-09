@@ -1,6 +1,6 @@
 {
   "name": "pi-hashline-edit-pro",
-  "version": "6.1.0",
+  "version": "6.2.0",
   "type": "module",
   "description": "Hash-anchored read/replace/insert/grep tools for pi-coding-agent. Every line gets a unique 4-char tokenizer-friendly anchor that stays stable across edits; stale or ambiguous anchors are rejected, never fuzzy-matched. Undo persists across restarts.",
   "main": "index.ts",
@@ -29,7 +29,7 @@
   "files": [
     "index.ts",
     "src",
-    "prompts",
+    "tool-prompts",
     "README.md",
     "LICENSE"
   ],
@@ -41,6 +41,7 @@
   "dependencies": {
     "diff": "^9.0.0",
     "file-type": "^22.0.2",
+    "web-tree-sitter": "^0.27.0",
     "xxhash-wasm": "^1.1.0"
   },
   "peerDependencies": {

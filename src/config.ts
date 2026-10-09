@@ -3,8 +3,11 @@ import { dirname } from "node:path";
 import { configPath } from "./paths";
 import { errCode, isRec } from "./utils";
 import { writeAtomic } from "./fs-write";
-export type AutoReadAllMode = "off" | "on" | "git";
-const AUTO_READ_ALL_MODES: AutoReadAllMode[] = ["off", "on", "git"];
+export type AutoReadAllMode = "off" | "outline" | "full";
+const AUTO_READ_ALL_MODES: AutoReadAllMode[] = ["off", "outline", "full"];
+
+export type ReadOnDisabledModels = "remove" | "vanilla";
+const READ_ON_DISABLED_MODELS: ReadOnDisabledModels[] = ["remove", "vanilla"];
 
 export const DEFAULT_DIFF_CONTEXT_LINES = 1;
 export const MIN_DIFF_CONTEXT_LINES = 0;
@@ -16,11 +19,13 @@ export interface Config {
   copyMoveEnabled?: boolean;
   replaceMatchEnabled?: boolean;
   autoReadAll?: AutoReadAllMode;
+  autoReadAllRequireGit?: boolean;
   autoReadAllIgnore?: string[];
   requirePath?: boolean;
   strictInput?: boolean;
   diffContextLines?: number;
   disableOnModels?: string[];
+  readOnDisabledModels?: ReadOnDisabledModels;
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -29,18 +34,35 @@ const DEFAULT_CONFIG: Config = {
   copyMoveEnabled: true,
   replaceMatchEnabled: true,
   autoReadAll: "off",
+  autoReadAllRequireGit: true,
   autoReadAllIgnore: [],
   requirePath: false,
   strictInput: false,
   diffContextLines: DEFAULT_DIFF_CONTEXT_LINES,
-  disableOnModels: []
+  disableOnModels: [],
+  readOnDisabledModels: "vanilla",
 };
 
 function parseAutoReadAllMode(value: unknown): AutoReadAllMode {
-  if (value === "off" || value === "on" || value === "git") return value;
-  if (value === true) return "on";
+  if (value === "off" || value === "outline" || value === "full") return value;
+  if (value === "outline(git)") return "outline";
+  if (value === "git") return "full";
+  if (value === "on" || value === true) return "full";
   if (value === false) return "off";
   return DEFAULT_CONFIG.autoReadAll ?? "off";
+}
+
+function parseAutoReadAllRequireGit(value: unknown, legacyMode: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (legacyMode === "git" || legacyMode === "outline(git)") return true;
+  if (legacyMode === "full" || legacyMode === "outline" || legacyMode === "on" || legacyMode === true) return false;
+  return DEFAULT_CONFIG.autoReadAllRequireGit ?? true;
+}
+
+function parseReadOnDisabledModels(value: unknown, legacy: unknown): ReadOnDisabledModels {
+  if (value === "remove" || value === "vanilla") return value;
+  if (typeof legacy === "boolean") return legacy ? "remove" : "vanilla";
+  return DEFAULT_CONFIG.readOnDisabledModels ?? "vanilla";
 }
 
 export function normalizeAutoReadAllIgnoreEntry(entry: string): string {
@@ -89,22 +111,27 @@ function parseConfig(content: string): Config {
   const copyMoveEnabled = parsed.copyMoveEnabled;
   const replaceMatchEnabled = parsed.replaceMatchEnabled;
   const autoReadAll = parsed.autoReadAll;
+  const autoReadAllRequireGit = parsed.autoReadAllRequireGit;
   const requirePath = parsed.requirePath;
   const strictInput = parsed.strictInput;
   const diffContextLines = parsed.diffContextLines;
   const autoReadAllIgnore = parsed.autoReadAllIgnore;
   const disableOnModels = parsed.disableOnModels;
+  const readOnDisabledModels = parsed.readOnDisabledModels;
+  const legacyDisableReadOnModels = parsed.disableReadOnModels;
   return {
     autoRead: typeof autoRead === "boolean" ? autoRead : DEFAULT_CONFIG.autoRead,
     anchorGrepEnabled: typeof anchorGrepEnabled === "boolean" ? anchorGrepEnabled : DEFAULT_CONFIG.anchorGrepEnabled,
     copyMoveEnabled: typeof copyMoveEnabled === "boolean" ? copyMoveEnabled : DEFAULT_CONFIG.copyMoveEnabled,
     replaceMatchEnabled: typeof replaceMatchEnabled === "boolean" ? replaceMatchEnabled : DEFAULT_CONFIG.replaceMatchEnabled,
     autoReadAll: parseAutoReadAllMode(autoReadAll),
+    autoReadAllRequireGit: parseAutoReadAllRequireGit(autoReadAllRequireGit, autoReadAll),
     requirePath: typeof requirePath === "boolean" ? requirePath : DEFAULT_CONFIG.requirePath,
     strictInput: typeof strictInput === "boolean" ? strictInput : DEFAULT_CONFIG.strictInput,
     diffContextLines: normalizeDiffContextLines(diffContextLines),
     autoReadAllIgnore: parseAutoReadAllIgnore(autoReadAllIgnore),
     disableOnModels: parseDisableOnModels(disableOnModels),
+    readOnDisabledModels: parseReadOnDisabledModels(readOnDisabledModels, legacyDisableReadOnModels),
   };
 }
 
@@ -212,21 +239,35 @@ export async function writeConfig(config: Config): Promise<void> {
 }
 
 
-type ToggleKey = "autoRead" | "anchorGrepEnabled" | "copyMoveEnabled" | "replaceMatchEnabled" | "requirePath" | "strictInput";
+type ToggleKey = "autoRead" | "autoReadAllRequireGit" | "anchorGrepEnabled" | "copyMoveEnabled" | "replaceMatchEnabled" | "requirePath" | "strictInput";
 
 async function toggleFlag(key: ToggleKey): Promise<boolean> {
   const config = await updateConfig((c) => { c[key] = !(c[key] === true); });
   return config[key] === true;
 }
 export const toggleAutoRead = (): Promise<boolean> => toggleFlag("autoRead");
+export const toggleAutoReadAllRequireGit = (): Promise<boolean> => toggleFlag("autoReadAllRequireGit");
 export const toggleAnchorGrep = (): Promise<boolean> => toggleFlag("anchorGrepEnabled");
 export const toggleCopyMove = (): Promise<boolean> => toggleFlag("copyMoveEnabled");
 export const toggleReplaceMatch = (): Promise<boolean> => toggleFlag("replaceMatchEnabled");
-export async function cycleAutoReadAllMode(): Promise<AutoReadAllMode> {
+function steppedIndex(length: number, index: number, delta: number): number {
+  return ((index + delta) % length + length) % length;
+}
+
+export async function cycleReadOnDisabledModels(delta = 1): Promise<ReadOnDisabledModels> {
+  let next: ReadOnDisabledModels = "vanilla";
+  await updateConfig((c) => {
+    const current = c.readOnDisabledModels ?? "vanilla";
+    next = READ_ON_DISABLED_MODELS[steppedIndex(READ_ON_DISABLED_MODELS.length, READ_ON_DISABLED_MODELS.indexOf(current), delta)] ?? "remove";
+    c.readOnDisabledModels = next;
+  });
+  return next;
+}
+export async function cycleAutoReadAllMode(delta = 1): Promise<AutoReadAllMode> {
   let next: AutoReadAllMode = "off";
   await updateConfig((c) => {
     const current = c.autoReadAll ?? "off";
-    next = AUTO_READ_ALL_MODES[(AUTO_READ_ALL_MODES.indexOf(current) + 1) % AUTO_READ_ALL_MODES.length] ?? "off";
+    next = AUTO_READ_ALL_MODES[steppedIndex(AUTO_READ_ALL_MODES.length, AUTO_READ_ALL_MODES.indexOf(current), delta)] ?? "off";
     c.autoReadAll = next;
   });
   return next;

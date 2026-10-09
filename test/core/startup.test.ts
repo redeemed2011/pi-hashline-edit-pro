@@ -177,6 +177,7 @@ describe("anchor_grep default", () => {
         overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput("j");
+        overlay.handleInput("j");
         overlay.handleInput(" ");
         await waitForConfig(async () => (await readConfig()).anchorGrepEnabled === false && !getActive().includes("anchor_grep") && getActive().includes("grep"));
         expect(getActive()).not.toContain("anchor_grep");
@@ -208,6 +209,7 @@ describe("anchor_grep default", () => {
         expect(getActive()).not.toContain("grep");
         expect(getActive()).toContain("anchor_grep");
         const overlay = await openConfigOverlay(commands, dir);
+        overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput("j");
@@ -300,7 +302,7 @@ describe("copy/move default", () => {
         await sessionStart({}, { cwd: dir, ui: { notify: vi.fn() } });
         expect(getActive()).toContain("copy");
         const overlay = await openConfigOverlay(commands, dir);
-        for (let step = 0; step < 5; step++) overlay.handleInput("j");
+        for (let step = 0; step < 6; step++) overlay.handleInput("j");
         overlay.handleInput(" ");
         await waitForConfig(async () => (await readConfig()).copyMoveEnabled === false && !getActive().includes("copy") && !getActive().includes("move"));
         expect(getActive()).not.toContain("copy");
@@ -384,7 +386,7 @@ describe("replace_match default", () => {
         await sessionStart({}, { cwd: dir, ui: { notify: vi.fn() } });
         expect(getActive()).toContain("replace_match");
         const overlay = await openConfigOverlay(commands, dir);
-        for (let step = 0; step < 8; step++) overlay.handleInput("j");
+        for (let step = 0; step < 7; step++) overlay.handleInput("j");
         overlay.handleInput(" ");
         await waitForConfig(async () => (await readConfig()).replaceMatchEnabled === false && !getActive().includes("replace_match"));
         expect(getActive()).not.toContain("replace_match");
@@ -423,14 +425,15 @@ describe("hashline-config overlay rendering", () => {
         expect(lines[lines.length - 1]).toBe(`╰${"─".repeat(58)}╯`);
         expect(lines.some((line) => line.includes("Hashline Config"))).toBe(true);
         expect(lines.some((line) => line.includes("↑↓ navigate"))).toBe(true);
-        expect(lines.filter((line) => line.includes("[x]")).length).toBe(4);
+        expect(lines.filter((line) => line.includes("[x]")).length).toBe(5);
         expect(lines.filter((line) => line.includes("[ ]")).length).toBe(2);
         expect(lines.filter((line) => line.includes("[on]")).length).toBe(0);
         expect(lines.filter((line) => line.includes("[off]")).length).toBe(1);
+        expect(lines.filter((line) => line.includes("[vanilla]")).length).toBe(1);
         overlay.handleInput("k");
-        expect(overlay.render(60).find((line) => line.includes("Disable on models"))!).toContain("> ");
+        expect(overlay.render(60).find((line) => line.includes("Read on disabled models"))!).toContain("> ");
         overlay.handleInput("j");
-        expect(overlay.render(60).find((line) => line.includes("Auto-read"))!).toContain("> ");
+        expect(overlay.render(60).find((line) => line.includes("[x] Auto-read"))!).toContain("> ");
         overlay.invalidate();
         overlay.handleInput("q");
         expect(closed).toBe(true);
@@ -460,8 +463,9 @@ describe("hashline-config overlay rendering", () => {
         await waitForConfig(async () => (await readConfig()).autoRead === false);
 
         overlay.handleInput("j");
+        overlay.handleInput("j");
         overlay.handleInput(" ");
-        await waitForConfig(async () => (await readConfig()).autoReadAll === "on");
+        await waitForConfig(async () => (await readConfig()).autoReadAll === "outline");
 
         overlay.handleInput("j");
         overlay.handleInput("j");
@@ -474,6 +478,7 @@ describe("hashline-config overlay rendering", () => {
         await waitForConfig(async () => (await readConfig()).copyMoveEnabled === false);
 
         overlay.handleInput("j");
+        overlay.handleInput("j");
         overlay.handleInput(" ");
         await waitForConfig(async () => (await readConfig()).requirePath === true);
 
@@ -485,7 +490,7 @@ describe("hashline-config overlay rendering", () => {
         expect(config.autoRead).toBe(false);
         expect(config.anchorGrepEnabled).toBe(false);
         expect(config.copyMoveEnabled).toBe(false);
-        expect(config.autoReadAll).toBe("on");
+        expect(config.autoReadAll).toBe("outline");
         expect(config.requirePath).toBe(true);
         expect(config.strictInput).toBe(true);
         expect(config.diffContextLines).toBe(1);
@@ -514,21 +519,15 @@ describe("hashline-config overlay rendering", () => {
         const overlay = await openConfigOverlay(commands, dir);
 
         overlay.handleInput("j");
-        overlay.handleInput("j");
-        overlay.handleInput("j");
         overlay.handleInput("+");
         await waitForConfig(async () => (await readConfig()).diffContextLines === 2);
         overlay.handleInput("-");
         await waitForConfig(async () => (await readConfig()).diffContextLines === 1);
 
         overlay.handleInput("k");
-        overlay.handleInput("k");
-        overlay.handleInput("k");
         overlay.handleInput(" ");
         await waitForConfig(async () => (await readConfig()).autoRead === false);
         await new Promise((resolve) => setTimeout(resolve, 250));
-        overlay.handleInput("j");
-        overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput("+");
         overlay.handleInput("-");
@@ -558,7 +557,7 @@ describe("hashline-config overlay rendering", () => {
         await sessionStart({}, { cwd: dir, model: codex, ui: { notify: vi.fn() } });
         expect(getActive()).toContain("read");
         const overlay = await openConfigOverlay(commands, dir);
-        for (let step = 0; step < 9; step++) overlay.handleInput("j");
+        for (let step = 0; step < 10; step++) overlay.handleInput("j");
         overlay.handleInput(" ");
         for (const char of "openai/*") overlay.handleInput(char);
         overlay.handleInput("\r");
@@ -567,8 +566,9 @@ describe("hashline-config overlay rendering", () => {
         const ctx = { cwd: dir, model: codex, hasUI: false, ui: { notify: vi.fn() }, sessionManager: { getBranch: () => [] } };
         await waitForConfig(async () => {
           await handlers.get("before_agent_start")!({}, ctx);
-          return !getActive().includes("read");
+          return !getActive().includes("replace");
         });
+        expect(getActive()).toContain("read");
         expect(getActive()).toContain("grep");
       } finally {
         vi.unstubAllEnvs();

@@ -10,7 +10,7 @@ import {
 } from "./replace-diff";
 import { readNormFile, type NormFile } from "./file-reader";
 import { editToolSchema, buildEditToolSchema, type ReqParams, type RawReqParams, assertReq, normReq } from "./payload-contract";
-import { coerceArrayShapedPayload, literalEscapeHints, splitLines } from "./utils";
+import { coerceArrayShapedPayload, literalEscapeHints, makePrepareArguments, splitLines } from "./utils";
 import { editResultSchema, withStructuredErrors } from "./structured";
 import { loadP, loadGuide } from "./prompts";
 import { type FileIdentity } from "./fs-write";
@@ -240,7 +240,7 @@ export async function compPreview(
   signal?: AbortSignal,
 ): Promise<RPreview> {
   try {
-    const normalized = normReq(request);
+    const normalized = normReq(request, "remove");
     assertReq(normalized);
     const targetPath = await resolveEditTargetWithRequirement({
       removeFrom: (normalized as ReqParams).remove_from,
@@ -269,9 +269,9 @@ type ToolDef = ToolDefinition<
 
 export function buildToolDef(flags: EditToolFlags = DEFAULT_EDIT_FLAGS): ToolDef {
   const prompted = withReplacePrompts({
-    description: loadP("../prompts/replace.md"),
-    snippet: loadP("../prompts/replace-snippet.md"),
-    guidelines: loadGuide("../prompts/replace-guidelines.md"),
+    description: loadP("../tool-prompts/replace.md"),
+    snippet: loadP("../tool-prompts/replace-snippet.md"),
+    guidelines: loadGuide("../tool-prompts/replace-guidelines.md"),
   }, flags);
   const parameters = buildEditToolSchema(flags.requirePath);
   return {
@@ -283,11 +283,12 @@ export function buildToolDef(flags: EditToolFlags = DEFAULT_EDIT_FLAGS): ToolDef
     promptSnippet: prompted.snippet,
     promptGuidelines: prompted.guidelines,
     ...editToolBase,
+    prepareArguments: makePrepareArguments("remove"),
     renderCall: editRenderCallWrapper(compPreview),
     renderResult: editRenderResultWrapper,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       return withStructuredErrors(signal, { diff: "" }, () => withAnchorSession(ctx, async () => {
-        const canonical = normReq(params);
+        const canonical = normReq(params, "remove");
         assertReq(canonical);
         const normalizedParams = canonical;
         normalizedParams.text = coerceArrayShapedPayload(

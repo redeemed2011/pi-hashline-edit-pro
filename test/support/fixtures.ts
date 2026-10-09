@@ -7,15 +7,14 @@ import register from "../../index";
 import { loadHashStore, shutdownHashStore } from "../../src/hash-store";
 import { initRegistry, resetRegistryForTests } from "../../src/anchor-registry";
 import { resetBatchStateForTests } from "../../src/batch";
-import { clearAllAutoReadAllComplete } from "../../src/auto-read-all-state";
 import { errCode } from "../../src/utils";
+import { HashlineConfigOverlay } from "../../src/config-ui";
 const envRestores: Array<() => void> = [];
 
 afterEach(() => {
   while (envRestores.length > 0) envRestores.pop()!();
   resetRegistryForTests();
   resetBatchStateForTests();
-  clearAllAutoReadAllComplete();
 });
 
 export async function getWritableTempRoot(): Promise<string> {
@@ -279,6 +278,22 @@ export function makePiStub(initialTools: string[] = []) {
   };
   return { pi, handlers, commands, tools, notify, getTool, getActive: () => [...active] };
 }
+
+export function makeConfigOverlay(input: {
+  onToggle: (key: string, delta?: number, value?: string) => Promise<void>;
+  done?: () => void;
+  maxHeight?: () => number | undefined;
+}): HashlineConfigOverlay {
+  const theme = { fg: (_area: string, text: string) => text, bold: (text: string) => text } as never;
+  return new HashlineConfigOverlay({
+    tui: { requestRender: () => undefined },
+    theme,
+    done: input.done ?? (() => undefined),
+    maxHeight: input.maxHeight,
+    onToggle: input.onToggle,
+  });
+}
+
 export function expectedEditContent(
   lines: string[],
   s: number,

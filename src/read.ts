@@ -1,6 +1,8 @@
+import { realpathSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	createReadTool,
+	createReadToolDefinition,
 	formatSize,
 	truncateHead,
 	DEFAULT_MAX_BYTES,
@@ -11,23 +13,21 @@ import { Type } from "typebox";
 import { loadFileKindAndText } from "./file-kind";
 import { MAX_OVERSIZED_WARNING_LINES } from "./constants";
 import { readNormFile, safeSnapId } from "./file-reader";
-import { lineHashes, fmtRegion, fmtRow, HASH_SEP, MAX_HASH_LINES } from "./hashline";
+import { lineHashes, fmtRegion, fmtRow, HASH_SEP, MAX_HASH_LINES, parseHashRef, resolveAnchorLine, AnchorMismatchError } from "./hashline";
 import { toCwd } from "./paths";
-import { abortIf, makePrepareArguments, numberedRead, visLines, splitLines } from "./utils";
+import { abortIf, isRec, makePrepareArguments, numberedRead, visLines, splitLines } from "./utils";
 import { loadP, loadGuide } from "./prompts";
 import { withReadPrompts, DEFAULT_EDIT_FLAGS, type EditToolFlags } from "./edit-common";
 import { valAccess } from "./validation";
-import { readConfig } from "./config";
-import { resolveTarget } from "./fs-write";
-import { withAnchorSession, servedForPath, sessionKeyFor, formatAnchorReclaimNotice, takeReclaimedPaths } from "./anchor-registry";
+import { withAnchorSession, adoptAnchors, ownerOf, ownersDifferingOnlyByCase, formatAnchorReclaimNotice, takeReclaimedPaths } from "./anchor-registry";
 import { serveRows } from "./served";
-import { getAutoReadAllSnapshot } from "./auto-read-all-state";
+import { snapshotCache } from "./hash-store/cache";
 import { Text } from "@earendil-works/pi-tui";
 import { anchoredLine, readResultSchema, withStructuredErrors, type AnchoredLine, type ReadResult } from "./structured";
-const R_DESC = loadP("../prompts/read.md");
-const R_SNIPPET = loadP("../prompts/read-snippet.md");
+const R_DESC = loadP("../tool-prompts/read.md");
+const R_SNIPPET = loadP("../tool-prompts/read-snippet.md");
 function readGuide(): string[] {
-  return loadGuide("../prompts/read-guidelines.md");
+  return loadGuide("../tool-prompts/read-guidelines.md");
 }
 function normPosInt(
 	value: number | undefined,
@@ -196,6 +196,90 @@ export async function fmtReadPreview(
 	};
 }
 
+export function resolveReadOffset(
+	offset: number | string | undefined,
+	fileLines: string[],
+	fileHashes: string[],
+	resolvedPath: string,
+): number | undefined {
+	if (offset === undefined || typeof offset === "number") return offset;
+	if (/^\d+$/.test(offset)) return Number(offset);
+	const ref = parseHashRef(offset);
+	const owner = ownerOf(ref.hash);
+	if (owner === undefined) {
+		const folded = ownersDifferingOnlyByCase(ref.hash);
+		const hint = folded.length > 0 ? ` Anchors are case-sensitive; ${folded.map((match) => `"${match.anchor}"`).join(", ")} differs only in case.` : "";
+		throw new Error(`[E_STALE_ANCHOR] "${ref.hash}" is not owned in this session.${hint} Call read() on ${resolvedPath} first.`);
+	}
+	if (owner.path !== resolvedPath) {
+		throw new Error(`[E_STALE_ANCHOR] "${ref.hash}" is owned by ${owner.path}. Call read() on ${resolvedPath} for fresh anchors.`);
+	}
+	try {
+		return resolveAnchorLine(ref, fileLines, fileHashes, resolvedPath);
+	} catch (error) {
+		if (error instanceof AnchorMismatchError) adoptAnchors(resolvedPath, error.feedbackMap);
+		throw error;
+	}
+}
+
+const builtinReadRenderCall = createReadToolDefinition(process.cwd()).renderCall as
+	(args: unknown, theme: any, context: any) => Text;
+
+function normalizeReadCallArgs(args: unknown): unknown {
+	if (!isRec(args)) return args;
+	const normalized: Record<string, unknown> = { ...args };
+	for (const key of ["offset", "limit"]) {
+		const value = normalized[key];
+		if (typeof value === "string" && /^\d+$/.test(value)) normalized[key] = Number(value);
+	}
+	return normalized;
+}
+
+function anchorRefOf(args: unknown): { anchor: string; limit: number | undefined; path: string | undefined } | undefined {
+	if (!isRec(args)) return undefined;
+	const { offset, limit, path } = args;
+	if (typeof offset !== "string" || offset.length === 0 || /^\d+$/.test(offset)) return undefined;
+	const validLimit = typeof limit === "number" && Number.isInteger(limit) && limit >= 1 ? limit : undefined;
+	if (limit !== undefined && validLimit === undefined) return undefined;
+	return { anchor: offset, limit: validLimit, path: typeof path === "string" ? path : undefined };
+}
+
+function cachedHashes(path: string): string[] | undefined {
+	const cached = snapshotCache.get(path);
+	if (cached !== undefined) return cached.hashes;
+	try {
+		return snapshotCache.get(realpathSync(path))?.hashes;
+	} catch {
+		return undefined;
+	}
+}
+
+function anchorLineOf(anchor: string, path: string | undefined, cwd: unknown): number | undefined {
+	if (path === undefined || typeof cwd !== "string") return undefined;
+	const hashes = cachedHashes(toCwd(path, cwd));
+	if (hashes === undefined) return undefined;
+	const index = hashes.indexOf(anchor);
+	return index < 0 ? undefined : index + 1;
+}
+
+function renderReadCall(args: unknown, theme: any, context: any): Text {
+	const normalized = normalizeReadCallArgs(args);
+	const rendered = builtinReadRenderCall(normalized, theme, context);
+	const ref = anchorRefOf(normalized);
+	if (ref === undefined) return rendered;
+	const marker = `:${ref.anchor}`;
+	const text = (rendered as unknown as { text: string }).text;
+	const index = text.lastIndexOf(marker);
+	if (index < 0) return rendered;
+	const line = anchorLineOf(ref.anchor, ref.path, context?.cwd);
+	if (line === undefined && ref.limit === undefined) return rendered;
+	const lineLabel = line === undefined ? "" : ` (${line})`;
+	const limitLabel = ref.limit === undefined ? "" : ` +${ref.limit}`;
+	const suffix = theme.fg("warning", `${lineLabel}${limitLabel}`);
+	rendered.setText(`${text.slice(0, index + marker.length)}${suffix}${text.slice(index + marker.length)}`);
+	return rendered;
+}
+
 export function regRead(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FLAGS): void {
   const prompted = withReadPrompts({ description: R_DESC, snippet: R_SNIPPET, guidelines: readGuide() }, flags);
   pi.registerTool({
@@ -210,20 +294,26 @@ export function regRead(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
 				description: "Path to the file to read (relative or absolute)",
 			}),
 			offset: Type.Optional(
-				Type.Integer({
-					minimum: 1,
-					description: "Line number to start reading from (1-indexed)",
-				}),
+				Type.Union([
+					Type.Integer({
+						minimum: 1,
+						description: "Line number to start reading from (1-indexed)",
+					}),
+					Type.String({
+						description: "4-char anchor of a served line to start reading from",
+					}),
+				], { description: "Line number (1-indexed) or a served anchor to start reading from" }),
 			),
 			limit: Type.Optional(
 				Type.Integer({
 					minimum: 1,
-					description: "Maximum number of lines to read",
+					description: "Maximum number of lines to read from offset",
 				}),
 			),
 		}),
 		outputSchema: readResultSchema,
 		executionMode: "sequential",
+		renderCall: renderReadCall,
 		renderResult(result, { isPartial, expanded }, theme, context) {
 			if (isPartial) return new Text((theme as unknown as { fg: (a:string,b:string)=>string }).fg("warning", "Reading..."), 0, 0);
 			const raw = (result.content?.[0] as { text?: string } | undefined)?.text;
@@ -243,22 +333,6 @@ export function regRead(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
 
 				abortIf(signal);
 				await valAccess(absolutePath, rawPath);
-                const autoReadAllMode = (await readConfig()).autoReadAll ?? "off";
-                if (autoReadAllMode !== "off") {
-                  const canonical = await resolveTarget(absolutePath).catch(() => undefined);
-                  if (canonical !== undefined) {
-                    const stored = getAutoReadAllSnapshot(sessionKeyFor(ctx), canonical);
-                    if (stored !== undefined) {
-                      const current = await safeSnapId(canonical, "auto-read-all guard");
-                      if (current !== undefined && current === stored) {
-                        const served = servedForPath(canonical);
-                        if (served !== undefined && served.size > 0) {
-                          throw new Error(`[E_AUTO_READ_ALL] ${rawPath} is unchanged since this session's start-of-session auto-read, so the attached content is still exact. Read succeeds on files that have changed since the full auto read.`);
-                        }
-                      }
-                    }
-                  }
-                }
 
 				abortIf(signal);
 				const file = await loadFileKindAndText(absolutePath, { maxLines: MAX_HASH_LINES, displayPath: rawPath });
@@ -279,12 +353,10 @@ export function regRead(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
 	        rawPath, ctx.cwd, { signal, preloadedFile: file, maxLines: MAX_HASH_LINES },
 	      );
 				const fileLines = splitLines(normalized);
+				const offset = resolveReadOffset(params.offset, fileLines, fileHashes, resolvedPath);
 				const preview = await fmtReadPreview(
 					normalized,
-					{
-						offset: params.offset,
-						limit: params.limit,
-					},
+					{ offset, limit: params.limit },
 					fileHashes,
 					resolvedPath,
 				);
@@ -315,12 +387,12 @@ export function regRead(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
 					details: {
 						truncation: preview.truncation,
 						snapshotId,
-						offset: params.offset ?? 1,
+						offset: preview.startLine,
 						...(preview.nextOffset !== undefined
 							? { nextOffset: preview.nextOffset }
 							: {}),
 						metrics: {
-							truncated: !!preview.truncation,
+							truncated: preview.truncation !== undefined,
 							...(preview.nextOffset !== undefined
 								? { next_offset: preview.nextOffset }
 								: {}),

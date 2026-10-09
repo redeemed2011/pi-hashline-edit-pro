@@ -34,7 +34,7 @@ describe("discoverAutoReadAllFiles", () => {
       await writeFile(join(cwd, "image.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0]));
       await writeFile(join(cwd, "huge.txt"), "x".repeat(250_000));
 
-      const discovery = await discoverAutoReadAllFiles(cwd);
+      const discovery = await discoverAutoReadAllFiles(cwd, "full");
       expect(discovery.source).toBe("git");
       expect(discovery.files).toEqual([".gitignore", "tracked.ts", "untracked.md"]);
       expect(discovery.discovered).toBe(6);
@@ -53,7 +53,7 @@ describe("discoverAutoReadAllFiles", () => {
       await writeFile(join(cwd, ".gitignore"), "secret.txt\n");
       await writeFile(join(cwd, "secret.txt"), "no\n");
 
-      const discovery = await discoverAutoReadAllFiles(cwd);
+      const discovery = await discoverAutoReadAllFiles(cwd, "full", [], false);
       expect(discovery.source).toBe("rg");
       expect(discovery.files).toEqual([".gitignore", "keep.txt"]);
     } finally {
@@ -69,7 +69,7 @@ describe("discoverAutoReadAllFiles", () => {
       execFileSync("git", ["add", "gone.txt"], { cwd });
       await rm(join(cwd, "gone.txt"));
 
-      const discovery = await discoverAutoReadAllFiles(cwd);
+      const discovery = await discoverAutoReadAllFiles(cwd, "full");
       expect(discovery.files).toEqual([]);
       expect(discovery.skippedOther).toBe(1);
     } finally {
@@ -77,7 +77,7 @@ describe("discoverAutoReadAllFiles", () => {
     }
   });
 
-  it("lists git files in git mode", async () => {
+  it("lists git files when git is required", async () => {
     const cwd = await makeTempDir("pi-hashline-auto-read-all-gitmode-git-");
     try {
       initGitRepo(cwd);
@@ -85,7 +85,7 @@ describe("discoverAutoReadAllFiles", () => {
       await writeFile(join(cwd, "untracked.md"), "# hi\n");
       execFileSync("git", ["add", "tracked.ts"], { cwd });
 
-      const discovery = await discoverAutoReadAllFiles(cwd, "git");
+      const discovery = await discoverAutoReadAllFiles(cwd, "full");
       expect(discovery.source).toBe("git");
       expect(discovery.files).toEqual(["tracked.ts", "untracked.md"]);
     } finally {
@@ -93,11 +93,11 @@ describe("discoverAutoReadAllFiles", () => {
     }
   });
 
-  it("returns no files in git mode outside a git repository", async () => {
+  it("returns no files outside a git repository when git is required", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "pi-hashline-auto-read-all-gitmode-"));
     try {
       await writeFile(join(cwd, "keep.txt"), "keep\n");
-      const discovery = await discoverAutoReadAllFiles(cwd, "git");
+      const discovery = await discoverAutoReadAllFiles(cwd, "full");
       expect(discovery.source).toBe("git");
       expect(discovery.files).toEqual([]);
     } finally {
@@ -114,12 +114,12 @@ describe("discoverAutoReadAllFiles", () => {
       await writeFile(join(cwd, "sub", "package-lock.json"), "{}\n");
       await writeFile(join(cwd, "keep.ts"), "export const a = 1;\n");
 
-      const discovery = await discoverAutoReadAllFiles(cwd);
+      const discovery = await discoverAutoReadAllFiles(cwd, "full");
       expect(discovery.files).toEqual(["keep.ts"]);
       expect(discovery.discovered).toBe(3);
       expect(discovery.skippedByName).toBe(2);
 
-      const injection = await buildAutoReadAllInjection(cwd, 1_000_000);
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000, "full");
       expect(injection).toBeDefined();
       expect(injection!.text).toContain("=== keep.ts ===");
       expect(injection!.text).not.toContain("=== package-lock.json ===");
@@ -143,7 +143,7 @@ describe("discoverAutoReadAllFiles", () => {
       }
       await mkdir(join(cwd, "Vendor"), { recursive: true });
       await writeFile(join(cwd, "Vendor", "upper.ts"), "export const a = 1;\n");
-      const discovery = await discoverAutoReadAllFiles(cwd);
+      const discovery = await discoverAutoReadAllFiles(cwd, "full");
       expect(discovery.files).toEqual(["keep.ts", "vendor_notes.txt"]);
       expect(discovery.skippedByName).toBe(segments.length + 1);
     } finally {
@@ -162,11 +162,11 @@ describe("discoverAutoReadAllFiles", () => {
       await writeFile(join(cwd, "resources", "scss", "coreui-icons", "icon.scss"), ".icon {}\n");
       await mkdir(join(cwd, "public", "images", "coreui"), { recursive: true });
       await writeFile(join(cwd, "public", "images", "coreui", "logo.png"), "not an image\n");
-      const discovery = await discoverAutoReadAllFiles(cwd);
+      const discovery = await discoverAutoReadAllFiles(cwd, "full");
       expect(discovery.files).toEqual(["keep.ts"]);
       expect(discovery.skippedBinary).toBeGreaterThanOrEqual(2);
       expect(discovery.skippedByName).toBeGreaterThanOrEqual(2);
-      const injection = await buildAutoReadAllInjection(cwd, 1_000_000);
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000, "full");
       expect(injection!.text).not.toContain("=== icon.svg ===");
       expect(injection!.text).not.toContain("coreui-icons");
     } finally {
@@ -185,7 +185,7 @@ describe("discoverAutoReadAllFiles", () => {
       for (const name of skipped) {
         await writeFile(join(cwd, name), "export const a = 1;\n");
       }
-      const discovery = await discoverAutoReadAllFiles(cwd);
+      const discovery = await discoverAutoReadAllFiles(cwd, "full");
       expect(discovery.files).toEqual(["bundle.js", "generated.js", "keep.ts"]);
       expect(discovery.skippedByName).toBe(skipped.length);
     } finally {
@@ -199,14 +199,68 @@ describe("discoverAutoReadAllFiles", () => {
       initGitRepo(cwd);
       await writeFile(join(cwd, "small.txt"), "alpha\nbeta\n");
       await writeFile(join(cwd, "big.txt"), Array.from({ length: 2500 }, (_, i) => `line ${i}`).join("\n") + "\n");
-      const injection = await buildAutoReadAllInjection(cwd, 1_000_000);
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000, "full");
       expect(injection).toBeDefined();
       expect(injection!.completeFiles).toBe(2);
       expect(injection!.text).toContain("=== small.txt ===");
       expect(injection!.text).not.toContain("[complete,");
       expect(injection!.text).toContain("=== big.txt ===");
       expect(injection!.text).toContain("[coverage: 2 complete]");
-      expect(injection!.text).toContain("[files complete:");
+      expect(injection!.text).not.toContain("[files complete:");
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("does not count a truncated outline as complete", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-coverage-");
+    try {
+      initGitRepo(cwd);
+      await writeFile(join(cwd, "small.ts"), "export function a() { return 1; }\nexport function b() { return 2; }\n");
+      await writeFile(join(cwd, "many.ts"), Array.from({ length: 500 }, (_, i) => `export function f${i}() { return ${i}; }`).join("\n") + "\n");
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000, "outline");
+      expect(injection).toBeDefined();
+      expect(injection!.completeFiles).toBe(1);
+      expect(injection!.text).toContain("[coverage: 1 complete]");
+      expect(injection!.text).not.toContain("[files complete:");
+      expect(injection!.omitted).toEqual([]);
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("keeps Laravel view overrides under resources/views/vendor", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-vendor-views-");
+    try {
+      initGitRepo(cwd);
+      await mkdir(join(cwd, "vendor", "laravel"), { recursive: true });
+      await mkdir(join(cwd, "resources", "views", "vendor", "mail"), { recursive: true });
+      await writeFile(join(cwd, "vendor", "laravel", "framework.php"), "<?php\n");
+      await writeFile(join(cwd, "resources", "views", "vendor", "mail", "message.blade.php"), "@extends('layouts.app')\n");
+      await writeFile(join(cwd, "resources", "views", "home.blade.php"), "@extends('layouts.app')\n");
+
+      const discovery = await discoverAutoReadAllFiles(cwd, "full");
+      expect(discovery.files).toContain("resources/views/vendor/mail/message.blade.php");
+      expect(discovery.files).toContain("resources/views/home.blade.php");
+      expect(discovery.files).not.toContain("vendor/laravel/framework.php");
+      expect(discovery.skippedByName).toBe(1);
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("skips Laravel IDE helper output", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-ide-helper-");
+    try {
+      initGitRepo(cwd);
+      await writeFile(join(cwd, "User.php"), "<?php\n");
+      await writeFile(join(cwd, "_ide_helper.php"), "<?php\n");
+      await writeFile(join(cwd, "_ide_helper_models.php"), "<?php\n");
+      await writeFile(join(cwd, ".phpstorm.meta.php"), "<?php\n");
+
+      const discovery = await discoverAutoReadAllFiles(cwd, "full");
+      expect(discovery.files).toEqual(["User.php"]);
+      expect(discovery.skippedByName).toBe(3);
     } finally {
       await cleanupCwd(cwd);
     }
@@ -221,7 +275,7 @@ describe("buildAutoReadAllInjection", () => {
       await writeFile(join(cwd, "sample.txt"), "alpha\nbeta\n");
       await writeFile(join(cwd, "empty.txt"), "");
 
-      const injection = await buildAutoReadAllInjection(cwd, 1_000_000);
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000, "full");
       expect(injection).toBeDefined();
       expect(injection!.files).toBe(2);
       expect(injection!.text).toContain("[hashline auto-read-all]");
@@ -244,7 +298,7 @@ describe("buildAutoReadAllInjection", () => {
       await writeFile(join(cwd, "a.txt"), "a\n".repeat(2000));
       await writeFile(join(cwd, "b.txt"), "b\n".repeat(2000));
 
-      const injection = await buildAutoReadAllInjection(cwd, 3000);
+      const injection = await buildAutoReadAllInjection(cwd, 3000, "full");
       expect(injection).toBeDefined();
       expect(injection!.files).toBe(1);
       expect(injection!.omitted).toEqual(["b.txt"]);
@@ -252,6 +306,78 @@ describe("buildAutoReadAllInjection", () => {
       const omittedPath = await resolveTarget(join(cwd, "b.txt"));
       expect(ownersForPath(omittedPath).size).toBe(0);
       expect(servedForPath(omittedPath)).toBeUndefined();
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("attaches anchor-stamped outlines in outline mode", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-outline-");
+    try {
+      initGitRepo(cwd);
+      await writeFile(join(cwd, "app.ts"), "export function run() {\n  return 1;\n}\n");
+      await writeFile(join(cwd, "notes.txt"), "alpha\nbeta\n");
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000, "outline");
+      expect(injection).toBeDefined();
+      expect(injection!.text).toContain("=== app.ts (TypeScript) — 3 lines ===");
+      expect(injection!.text).toMatch(/[A-Za-z]{4}│function run/);
+      expect(injection!.text).not.toContain("return 1");
+      expect(injection!.text).toContain("=== notes.txt — 2 lines ===");
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("attaches outlines when git is required", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-outline-git-");
+    try {
+      initGitRepo(cwd);
+      await writeFile(join(cwd, "app.ts"), "export function run() {\n  return 1;\n}\n");
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000, "outline");
+      expect(injection).toBeDefined();
+      expect(injection!.text).toContain("outlined below");
+      expect(injection!.text).toContain("=== app.ts (TypeScript) — 3 lines ===");
+      expect(injection!.text).not.toContain("return 1");
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("injects nothing outside a git repository when git is required", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "pi-hashline-auto-read-all-outline-git-off-"));
+    try {
+      await writeFile(join(cwd, "sample.txt"), "alpha\n");
+      expect(await buildAutoReadAllInjection(cwd, 1_000_000, "outline")).toBeUndefined();
+      expect((await discoverAutoReadAllFiles(cwd, "outline")).files).toEqual([]);
+      expect(await buildAutoReadAllInjection(cwd, 1_000_000, "outline", [], false)).toBeDefined();
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("serves the empty-line anchor for an empty file in outline mode", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-outline-empty-");
+    try {
+      initGitRepo(cwd);
+      await writeFile(join(cwd, "empty.txt"), "");
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000, "outline");
+      expect(injection).toBeDefined();
+      expect(injection!.text).toContain("=== empty.txt — 0 lines ===");
+      expect(injection!.text).toContain("File is empty. Use replace to insert content.");
+      const absolute = await resolveTarget(join(cwd, "empty.txt"));
+      expect(servedForPath(absolute)?.size).toBe(1);
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("returns nothing in off mode", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-offmode-");
+    try {
+      initGitRepo(cwd);
+      await writeFile(join(cwd, "sample.txt"), "alpha\n");
+      expect(await buildAutoReadAllInjection(cwd, 1_000_000, "off")).toBeUndefined();
+      expect((await discoverAutoReadAllFiles(cwd, "off")).files).toEqual([]);
     } finally {
       await cleanupCwd(cwd);
     }

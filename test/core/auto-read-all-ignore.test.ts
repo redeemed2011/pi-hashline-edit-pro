@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { discoverAutoReadAllFiles, buildAutoReadAllInjection, normalizeAutoReadAllIgnoreList, isExcludedByCustomIgnore } from "../../src/auto-read-all";
 import { parseAutoReadAllIgnore, setAutoReadAllIgnore, setAutoReadAllIgnoreFromText, setDisableOnModels, readConfig } from "../../src/config";
 import { configRows, HashlineConfigOverlay } from "../../src/config-ui";
-import { makeTempDir, rmRetry, withTempDir } from "../support/fixtures";
+import { makeConfigOverlay, makeTempDir, rmRetry, withTempDir } from "../support/fixtures";
 
 function initGitRepo(cwd: string): void {
   execFileSync("git", ["init", "-q"], { cwd });
@@ -106,9 +106,9 @@ describe("discoverAutoReadAllFiles with custom ignores", () => {
       await writeFile(join(cwd, "docs", "readme.md"), "hi\n");
       await mkdir(join(cwd, "src", "docs"), { recursive: true });
       await writeFile(join(cwd, "src", "docs", "nested.md"), "hi\n");
-      const plain = await discoverAutoReadAllFiles(cwd, "on", []);
+      const plain = await discoverAutoReadAllFiles(cwd, "full", []);
       expect(plain.files).toContain("docs/readme.md");
-      const ignored = await discoverAutoReadAllFiles(cwd, "on", ["docs"]);
+      const ignored = await discoverAutoReadAllFiles(cwd, "full", ["docs"]);
       expect(ignored.files).toEqual(["keep.ts"]);
       expect(ignored.skippedByName).toBeGreaterThan(plain.skippedByName);
     } finally {
@@ -126,9 +126,9 @@ describe("discoverAutoReadAllFiles with custom ignores", () => {
       await writeFile(join(cwd, "src", "tmp", "b.txt"), "hi\n");
       await mkdir(join(cwd, "src", "other"), { recursive: true });
       await writeFile(join(cwd, "src", "other", "c.txt"), "hi\n");
-      const seg = await discoverAutoReadAllFiles(cwd, "on", ["TMP"]);
+      const seg = await discoverAutoReadAllFiles(cwd, "full", ["TMP"]);
       expect(seg.files).toEqual(["keep.ts", "src/other/c.txt"]);
-      const nested = await discoverAutoReadAllFiles(cwd, "on", ["src/tmp"]);
+      const nested = await discoverAutoReadAllFiles(cwd, "full", ["src/tmp"]);
       expect(nested.files).toEqual(["Tmp/a.txt", "keep.ts", "src/other/c.txt"]);
     } finally {
       await rmRetry(cwd);
@@ -141,7 +141,7 @@ describe("discoverAutoReadAllFiles with custom ignores", () => {
       await writeFile(join(cwd, "keep.ts"), "export const a = 1;\n");
       await mkdir(join(cwd, "secret"), { recursive: true });
       await writeFile(join(cwd, "secret", "hidden.txt"), "hi\n");
-      const injection = await buildAutoReadAllInjection(cwd, 1_000_000, "on", ["secret"]);
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000, "full", ["secret"]);
       expect(injection).toBeDefined();
       expect(injection!.text).toContain("=== keep.ts ===");
       expect(injection!.text).not.toContain("=== secret/hidden.txt ===");
@@ -157,7 +157,7 @@ describe("discoverAutoReadAllFiles with custom ignores", () => {
       await writeFile(join(cwd, "a.test.ts"), "export const b = 2;\n");
       await mkdir(join(cwd, "src"), { recursive: true });
       await writeFile(join(cwd, "src", "b.test.ts"), "export const c = 3;\n");
-      const ignored = await discoverAutoReadAllFiles(cwd, "on", ["*.test.ts"]);
+      const ignored = await discoverAutoReadAllFiles(cwd, "full", ["*.test.ts"]);
       expect(ignored.files).toEqual(["keep.ts"]);
       expect(ignored.skippedByName).toBe(2);
     } finally {
@@ -173,7 +173,7 @@ describe("discoverAutoReadAllFiles with custom ignores", () => {
       await writeFile(join(cwd, "src", "generated", "api.ts"), "export const b = 2;\n");
       await mkdir(join(cwd, "src", "other"), { recursive: true });
       await writeFile(join(cwd, "src", "other", "api.ts"), "export const c = 3;\n");
-      const injection = await buildAutoReadAllInjection(cwd, 1_000_000, "on", ["src/generated/*.ts"]);
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000, "full", ["src/generated/*.ts"]);
       expect(injection).toBeDefined();
       expect(injection!.text).toContain("=== src/other/api.ts ===");
       expect(injection!.text).not.toContain("=== src/generated/api.ts ===");
@@ -201,8 +201,7 @@ describe("configRows ignore folders", () => {
 });
 
 function makeOverlay(onToggle: (key: string, delta?: number, value?: string) => Promise<void>): HashlineConfigOverlay {
-  const theme = { fg: (_area: string, text: string) => text, bold: (text: string) => text } as never;
-  return new HashlineConfigOverlay({ tui: { requestRender() {} }, theme, done() {}, onToggle: onToggle as never });
+  return makeConfigOverlay({ onToggle });
 }
 
 describe("HashlineConfigOverlay ignore editing", () => {
@@ -214,6 +213,8 @@ describe("HashlineConfigOverlay ignore editing", () => {
         seen.push({ key, value });
       });
       await overlay.load();
+      overlay.handleInput("j");
+      overlay.handleInput("j");
       overlay.handleInput("j");
       overlay.handleInput("j");
       overlay.handleInput(" ");
@@ -228,7 +229,7 @@ describe("HashlineConfigOverlay ignore editing", () => {
       expect(seen[0]!.value).toBe("docs");
     });
   });
-  it("starts editing with e and cancels with escape", async () => {
+  it("starts editing with space and cancels with escape", async () => {
     await withTempDir("ignore-overlay-cancel-", async () => {
       await setAutoReadAllIgnore(["keep"]);
       let calls = 0;
@@ -238,7 +239,9 @@ describe("HashlineConfigOverlay ignore editing", () => {
       await overlay.load();
       overlay.handleInput("j");
       overlay.handleInput("j");
-      overlay.handleInput("e");
+      overlay.handleInput("j");
+      overlay.handleInput("j");
+      overlay.handleInput(" ");
       overlay.handleInput("x");
       overlay.handleInput("\x1b");
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -255,6 +258,8 @@ describe("HashlineConfigOverlay ignore editing", () => {
         seen.push(value ?? "");
       });
       await overlay.load();
+      overlay.handleInput("j");
+      overlay.handleInput("j");
       overlay.handleInput("j");
       overlay.handleInput("j");
       overlay.handleInput(" ");
@@ -288,7 +293,7 @@ describe("HashlineConfigOverlay ignore editing", () => {
         seen.push({ key, value });
       });
       await overlay.load();
-      for (let step = 0; step < 9; step++) overlay.handleInput("j");
+      for (let step = 0; step < 10; step++) overlay.handleInput("j");
       overlay.handleInput(" ");
       for (const char of "openai/*") overlay.handleInput(char);
       overlay.handleInput("\r");
